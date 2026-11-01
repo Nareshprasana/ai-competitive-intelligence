@@ -1,4 +1,4 @@
-# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1)
+# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1 + 1.5)
 
 ## Design principles
 
@@ -6,6 +6,7 @@
 - **Deterministic mocks in Phase 1**: no agent performs real research, calls an LLM, or consumes external credits. Every node returns structured placeholder data clearly marked `mock: true`. This is explicit and intentional — the graph is real, the data is not.
 - **Separation of concerns**: node logic (`graph/nodes/`) is independent of graph wiring (`graph/builder.py`).
 - **Observable execution**: every node records metadata; failures are captured, not swallowed.
+- **Server-side organization ownership**: research records are owned by an `organization_id` enforced in the repository layer; clients cannot read another org's records.
 
 ## The agents (nodes)
 
@@ -31,13 +32,19 @@ Each node is `async (state: ResearchState) -> dict` returning a partial update. 
 - On failure: `status: "failed"` metadata + an `errors` entry appended; the graph continues to `finalize_research`, which marks `review_status = "failed"`.
 - The API never returns `status: "completed"` when any node has failed.
 
+## Persistence and checkpointing (Phase 1.5)
+
+- Business research records are stored in PostgreSQL (`researches` table) via `ResearchRepository`, with organization isolation.
+- LangGraph checkpoint state is stored in separate PostgreSQL tables (`checkpoints`, `checkpoint_writes`) via `AsyncPostgresSaver`.
+- Thread-based execution: each research run uses `thread_id = research_id`, enabling checkpoint/resume.
+- Checkpoint storage is kept separate from business records.
+
 ## Extensibility (future phases)
 
-- **Conditional routing**: insert a review gate after `report_generator_mock` (e.g., route to a human-review node or back to `strategic_analyst_mock` on low confidence).
-- **Parallel agents**: branch from `research_planner` into independent company/competitor/market subgraphs, then join.
+- **Conditional routing**: insert a review gate after `report_generator_mock`.
+- **Parallel agents**: branch from `research_planner` into independent subgraphs, then join.
 - **Real LLM agents**: swap `*_mock` nodes for nodes that call `get_llm_client()` (OpenRouter/DeepSeek) once `OPENROUTER_API_KEY` is configured.
-- **Persistence**: replace the in-memory `_research_store` with SQLAlchemy-backed models and the Alembic migrations once PostgreSQL is provisioned.
-- **Auth/RBAC**: `organization_id` on `ResearchState` enables tenant isolation.
+- **Auth/RBAC**: `organization_id` on `ResearchState` enables tenant isolation; repository already enforces org-scoped queries.
 
 ## Why mocks in Phase 1
 

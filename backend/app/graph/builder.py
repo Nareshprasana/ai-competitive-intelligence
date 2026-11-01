@@ -11,6 +11,8 @@ A compiled graph is exposed as ``graph`` for convenience, and ``build_graph()``
 returns a fresh compiled graph (useful in tests).
 """
 
+from typing import Any, Optional
+
 from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import ResearchState
@@ -50,12 +52,17 @@ _NODES = {
 }
 
 
-def build_graph():
+def build_graph(checkpointer: Optional[Any] = None):
     """Build and compile the research StateGraph.
 
     The graph is linear, making execution order trivial to verify. It is
     structured so future phases can insert conditional routing (e.g. review
     gates) and parallel agents without changing node logic.
+
+    Args:
+        checkpointer: Optional LangGraph checkpointer (e.g. async PostgreSQL
+            saver) for thread-based checkpointing and resume. When omitted, the
+            graph runs without persistence.
     """
     builder = StateGraph(ResearchState)
 
@@ -68,19 +75,27 @@ def build_graph():
         builder.add_edge(current, nxt)
     builder.add_edge(NODE_ORDER[-1], END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 # Compiled graph (created on first access, not at import time of other modules).
-_graph = None
+_graph: Optional[Any] = None
 
 
-def get_graph():
-    """Return a compiled graph, compiling lazily on first use."""
+def get_graph(checkpointer: Optional[Any] = None):
+    """Return a compiled graph, compiling lazily on first use.
+
+    When a checkpointer is provided, a fresh graph compiled with that
+    checkpointer is returned (checkpointer-bound graphs are not cached across
+    different checkpointer instances).
+    """
     global _graph
-    if _graph is None:
-        _graph = build_graph()
-    return _graph
+    if checkpointer is None and _graph is not None:
+        return _graph
+    graph = build_graph(checkpointer=checkpointer)
+    if checkpointer is None:
+        _graph = graph
+    return graph
 
 
 graph = get_graph()

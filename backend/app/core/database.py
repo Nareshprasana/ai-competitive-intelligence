@@ -9,8 +9,10 @@ Design goals:
   migrations can use vector columns once PostgreSQL is available.
 """
 
-from typing import AsyncGenerator, Optional
+import asyncio
+from typing import Any, AsyncGenerator, Dict, Optional
 
+from psycopg import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
 
+from app.core.checkpoint import AsyncPostgresSaver
 from app.core.config import get_settings
 from app.core.exceptions import DatabaseUnavailableError
 from app.core.logging import get_logger
@@ -32,17 +35,23 @@ class Base(DeclarativeBase):
 
 
 class DatabaseManager:
-    """Manages the SQLAlchemy async engine and session factory.
+    """Manages the SQLAlchemy async engine, session factory, and checkpointer.
 
     The engine is created lazily on first use. If no DATABASE_URL is configured
     (or the database cannot be reached), operations raise
     ``DatabaseUnavailableError`` with a clear message instead of failing
     silently or reporting a false connection.
+
+    LangGraph checkpoint state is stored in dedicated ``checkpoints`` /
+    ``checkpoint_writes`` tables (created by ``AsyncPostgresSaver.setup()``),
+    SEPARATE from the business ``researches`` table owned by
+    :class:`app.repositories.research.ResearchRepository`.
     """
 
     def __init__(self) -> None:
         self._engine: Optional[AsyncEngine] = None
         self._session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self._checkpointer: Optional[AsyncPostgresSaver] = None
         self._configured: bool = False
         self._available: bool = False
 
@@ -85,6 +94,72 @@ class DatabaseManager:
         if url.startswith("postgres://"):
             return url.replace("postgres://", "postgresql+asyncpg://", 1)
         return url
+
+    @staticmethod
+    def _to_libpq_url(url: str) -> str:
+        """Rewrite a SQLAlchemy async URL into a libpq connection string.
+
+        ``AsyncPostgresSaver`` (psycopg-based) needs a ``postgresql://`` URL,
+        not SQLAlchemy's ``postgresql+asyncpg://`` form.
+        """
+        libpq = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        libpq = libpq.replace("postgresql://", "postgresql://", 1)  # idempotent guard
+        return libpq
+
+    def checkpointer_url(self) -> Optional[str]:
+        """Return a libpq URL for the LangGraph checkpointer, or None."""
+        settings = get_settings()
+        url = settings.langgraph_checkpoint_database_url or settings.database_url
+        if not url:
+            return None
+        return self._to_libpq_url(url)
+
+    async def get_checkpointer(self) -> AsyncPostgresSaver:
+        """Create (and cache) a LangGraph PostgreSQL checkpointer.
+
+        Calls ``setup()`` to create the dedicated checkpoints tables. Returns
+        the same instance on subsequent calls.
+        """
+        if self._checkpointer is not None:
+            return self._checkpointer
+
+        self._ensure_configured()
+        if not self._available:
+            raise DatabaseUnavailableError(
+                "Database is not configured; cannot create LangGraph checkpointer.",
+                details={"hint": "Set DATABASE_URL in environment or .env"},
+            )
+
+        url = self.checkpointer_url()
+        if not url:
+            raise DatabaseUnavailableError(
+                "No checkpoint database URL configured.",
+                details={"hint": "Set DATABASE_URL or LANGGRAPH_CHECKPOINT_DATABASE_URL"},
+            )
+
+        # Open a dedicated psycopg connection for the checkpointer (separate
+        # from the SQLAlchemy async engine used by the research repository).
+        conn = await asyncio.to_thread(
+            Connection.connect, url, autocommit=True, prepare_threshold=0
+        )
+        saver = AsyncPostgresSaver(conn)
+        try:
+            await asyncio.to_thread(saver.setup)
+        except Exception:
+            await asyncio.to_thread(conn.close)
+            raise
+        self._checkpointer = saver
+        logger.info("LangGraph PostgreSQL checkpointer configured.")
+        return self._checkpointer
+
+    async def dispose_checkpointer(self) -> None:
+        """Release the checkpointer connection (clean shutdown)."""
+        if self._checkpointer is not None:
+            try:
+                await asyncio.to_thread(self._checkpointer.conn.close)
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                logger.debug("Error closing checkpointer connection.", exc_info=True)
+            self._checkpointer = None
 
     @property
     def is_available(self) -> bool:

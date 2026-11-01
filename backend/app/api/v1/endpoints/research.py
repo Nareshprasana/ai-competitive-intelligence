@@ -6,6 +6,7 @@ GET  /api/v1/research/{research_id} - fetch a research run's status and results
 
 from fastapi import APIRouter, Path
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.schemas.research import ResearchRequest, ResearchResponse, ResearchStatusResponse
 from app.services.research_service import get_research, run_research
@@ -51,7 +52,8 @@ async def get_research_endpoint(
 ) -> ResearchStatusResponse:
     """Return the status and structured results for a previously submitted research run."""
     logger.debug("Fetching research %s", research_id)
-    return await get_research(research_id)
+    organization_id = get_settings().default_organization_id
+    return await get_research(research_id, organization_id=organization_id)
 
 
 __all__ = ["router"]

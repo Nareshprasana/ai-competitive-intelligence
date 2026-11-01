@@ -18,6 +18,9 @@ from alembic import context
 from app.core.config import get_settings  # noqa: E402
 from app.core.database import Base  # noqa: E402
 
+# Import ORM models so they register on Base.metadata for autogenerate support.
+from app.models.research import Research  # noqa: E402,F401
+
 # pgvector types are imported for metadata completeness; the migration itself
 # uses SQLAlchemy core types so it remains runnable even before pgvector is
 # installed (pgvector column support is added when PostgreSQL is provisioned).

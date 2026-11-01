@@ -1,8 +1,8 @@
 # AI Competitive Intelligence System (ACIS)
 
-A production-oriented AI Competitive Intelligence system built with **LangGraph**, **FastAPI**, **PostgreSQL + pgvector**, and **Next.js**. Phase 0 + Phase 1 deliver a functioning multi-agent backend with deterministic mock agents (no LLM credits consumed) and a minimal dashboard that talks to the real backend.
+A production-oriented AI Competitive Intelligence system built with **LangGraph**, **FastAPI**, **PostgreSQL + pgvector**, and **Next.js**. Phase 0 + Phase 1 deliver a functioning multi-agent backend with deterministic mock agents (no LLM credits consumed). Phase 1.5 adds persistent research storage (PostgreSQL + SQLAlchemy repositories + Alembic migrations) and LangGraph PostgreSQL checkpointing, plus a minimal Next.js dashboard that talks to the real backend.
 
-> **Status:** Phase 0 + Phase 1 complete (backend fully tested; frontend code complete — see "Frontend" below).
+> **Status:** Phase 0 + Phase 1 + Phase 1.5 complete (backend fully tested: 55 tests; frontend code complete — see "Frontend" below for a verification limitation).
 
 ## Repository structure
 
@@ -10,9 +10,11 @@ A production-oriented AI Competitive Intelligence system built with **LangGraph*
 ai-competitive-intelligence/
   backend/              # FastAPI + LangGraph backend (Python)
     app/
-      core/             # config, logging, exceptions, database, LLM factory
+      core/             # config, logging, exceptions, database, LLM factory, checkpoint
       api/v1/           # versioned endpoints (health, research)
       graph/            # LangGraph state, nodes, builder
+      models/           # SQLAlchemy ORM models
+      repositories/     # SQLAlchemy data-access repositories
       schemas/          # Pydantic request/response schemas
       services/         # research orchestration service
     tests/              # Pytest unit + integration tests
@@ -60,9 +62,20 @@ ai-competitive-intelligence/
 - Exception handling: nodes capture failures, record them in `errors`, and the run is never reported as successful when a node fails.
 - Configurable, provider-independent LLM factory (OpenRouter-compatible); **no LLM calls in Phase 1**, lazy initialization (nothing at import time).
 - SQLAlchemy async engine/session; Alembic initialized with a pgvector-compatible initial migration; degrades gracefully without PostgreSQL (never falsely reports a connection).
-- Pytest suite: 40 tests covering startup, health, validation, research API, state, nodes, full graph, execution order, report generation, failure handling, missing LLM config, DB-unavailable behavior.
+- LangGraph PostgreSQL checkpointing (`AsyncPostgresSaver` adapter; dedicated `checkpoints`/`checkpoint_writes` tables separate from business records; thread-based execution and resume).
+- Pytest suite: 40 core tests (fallback mode, no DATABASE_URL) + 15 persistence/checkpoint tests (with DATABASE_URL) = 55 total covering startup, health, validation, research API, state, nodes, full graph, execution order, report generation, failure handling, missing LLM config, DB-unavailable behavior, repository operations, cross-organization isolation, migration correctness, and checkpointing.
 - Minimal Next.js dashboard (see Frontend).
 - Documentation: README, `docs/architecture.md`, `docs/agent-design.md`, `docs/development-roadmap.md`.
+
+### Phase 1.5 persistence
+
+When `DATABASE_URL` is configured (e.g. `postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db`):
+
+- Research records are stored in PostgreSQL (`researches` table) via `ResearchRepository`.
+- All queries enforce server-side organization ownership (`organization_id`); records are never exposed across organizations.
+- Alembic migration `0001_initial_research_tables` creates the schema (`alembic upgrade head`).
+- LangGraph checkpoints use dedicated tables (created by `AsyncPostgresSaver.setup()`).
+- Without `DATABASE_URL`, the app runs in fallback mode with an in-memory store and reports the database as unavailable.
 
 ## Backend quick start
 
@@ -87,7 +100,18 @@ cp .env.example .env
 # Phase 1; the app runs in mock-agent mode without them.
 ```
 
-### 3. Run the server
+### 3. (Optional) Initialize the database
+
+If you set `DATABASE_URL` in `.env`, apply the Alembic migration to create the
+researches schema:
+
+```bash
+alembic upgrade head
+```
+
+This step is optional — the application degrades gracefully without a database.
+
+### 4. Run the server
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -128,8 +152,11 @@ The Next.js dashboard lives in `frontend/`. It communicates with the FastAPI bac
 
 ```bash
 cd backend
-pytest                    # run the full suite (40 tests)
-pytest -q                 # quieter output
+# Without DATABASE_URL: 40 core tests (fallback/in-memory mode)
+pytest
+
+# With DATABASE_URL: 15 additional persistence/checkpoint/API tests
+DATABASE_URL=postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db pytest
 ```
 
 All tests use deterministic mock data and make **no external API calls** and consume **no LLM credits**.

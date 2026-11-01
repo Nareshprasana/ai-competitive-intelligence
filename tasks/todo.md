@@ -1,33 +1,48 @@
-# Task List: ACIS Phase 0 + Phase 1 (final state)
+# Task List: ACIS Phase 1.5 — Integration Verification & Database Persistence (FINAL)
 
-## Phase A: Repo foundation & backend core
-- [x] Task 1: Repo structure, .gitignore, requirements, env template
-- [x] Task 2: Core config (Pydantic settings), centralized logging
-- [x] Task 3: Centralized exception handling + custom exceptions
-- [x] Task 4: FastAPI app factory, DI, CORS, versioned router, health endpoint
-- [x] Task 5: SQLAlchemy engine/session + Base, pgvector prep, Alembic init + migration
+## Phase A: Inspection (done)
+- [x] Inspected existing implementation, git history, working tree
+- [x] Confirmed PostgreSQL 18 running, acis_db/acis_app configured
+- [x] Installed asyncpg, psycopg[binary], psycopg_pool, langgraph-checkpoint-postgres
+- [x] Confirmed AsyncPostgresSaver adapter works with ainvoke (thread-based, resume)
+- [x] pgvector extension NOT available on Windows PG — documented as prerequisite
 
-## Phase B: LangGraph core
-- [x] Task 6: ResearchState Pydantic model + reducers
-- [x] Task 7: Graph node implementations (8 mock nodes)
-- [x] Task 8: Graph builder (StateGraph compilation), metadata tracking, error handling
-- [x] Task 9: LLM factory (provider-independent, OpenRouter-compatible, lazy)
+## Phase B: Backend persistence (done)
+- [x] SQLAlchemy ORM models (Research table, indexes, org ownership)
+- [x] SQLAlchemy repository layer (create, get_by_id, update, list_by_org, cross-org isolation)
+- [x] Alembic migration matches models (0001_initial_research_tables)
+- [x] .env.example + requirements.txt updated
+- [x] alembic env.py imports Research model
+- [x] research_service uses repository + checkpointer + fallback store
+- [x] Existing 40 tests still pass (without DATABASE_URL)
 
-## Phase C: API & research flow
-- [x] Task 10: Research schemas + service layer
-- [x] Task 11: POST /api/v1/research + GET /api/v1/research/{id}
-- [x] Task 12: Wire graph execution into research endpoint
+## Phase C: LangGraph checkpointing (done)
+- [x] AsyncPostgresSaver adapter (delegates sync get_tuple/put/put_writes to thread)
+- [x] graph builder accepts optional checkpointer
+- [x] Thread-based execution (thread_id = research_id)
+- [x] Checkpoint storage separate from business records
+- [x] Resume supported (aget_tuple works)
 
-## Phase D: Frontend
-- [x] Task 13: Next.js app, Tailwind, layout + sidebar (code complete)
-- [x] Task 14: Research submission form + API client (code complete)
-- [x] Task 15: Status polling + structured report display (code complete)
-  [NOTE: could not npm install / start — no network to npm registry in this env]
+## Phase D: Frontend verification (LIMITATION DOCUMENTED)
+- [x] npm registry reachable (npm view works) but npm install HANGS (tarball downloads)
+- [x] Frontend dev server could NOT be started
+- [x] Frontend production build could NOT be verified
+- [x] End-to-end research via frontend could NOT be tested
+- [x] Limitation documented in README + architecture.md (not claimed as a result)
 
-## Phase E: Tests
-- [x] Task 16: Backend test suite (40 tests)
-- [x] Task 17: Full test suite passes — 40 passed, 0 failed
+## Phase E: New tests (done - 15 tests)
+- [x] PostgreSQL persistence (create/retrieve/update)
+- [x] Cross-organization data isolation (repository + API level)
+- [x] Status updates persisted
+- [x] Migration correctness (alembic upgrade head, researches table exists)
+- [x] Checkpoint configuration (setup creates tables, store + retrieve)
+- [x] Research retrieval after restart simulation (API persistence test)
+- [x] Existing 40 tests still green
 
-## Phase F: Docs & git
-- [x] Task 18: README + docs (architecture, agent-design, roadmap)
-- [x] Task 19: Git branch phase-0-1-foundation, commit 1453827, not pushed
+## Phase F: Security + docs + git
+- [x] Server-side org ownership enforced (repository filters by organization_id)
+- [x] Client-supplied org IDs not trusted (_resolve_organization_id)
+- [x] Cross-organization access tests
+- [x] No secrets in Git (.env.example only)
+- [x] Docs updated (architecture, agent-design, roadmap, README)
+- [x] Commit on phase-0-1-foundation, don't merge to main

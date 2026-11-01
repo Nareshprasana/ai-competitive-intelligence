@@ -1,28 +1,42 @@
 # Development Roadmap
 
-## Phase 0 + Phase 1 (complete — this delivery)
+## Phase 0 + Phase 1 (complete)
 
 - [x] Repository structure (monorepo: backend, frontend, infrastructure, docs)
 - [x] FastAPI app, Pydantic settings, centralized logging/exception handling
 - [x] CORS, dependency injection, API versioning (`/api/v1`), health endpoint, request-size limit
 - [x] LangGraph `StateGraph` with typed Pydantic `ResearchState` and reducers
-- [x] Eight deterministic mock nodes in required order
+- [x] Eight deterministic mock agents in required linear order
 - [x] Graph building separate from node logic; execution metadata; error handling
 - [x] Provider-independent LLM factory (OpenRouter-compatible); lazy; no LLM calls
 - [x] SQLAlchemy 2.0 async engine/session; Alembic; pgvector-compatible migration
 - [x] Graceful degradation without PostgreSQL (honest health reporting)
 - [x] `POST /api/v1/research` and `GET /api/v1/research/{id}` endpoints
 - [x] Pytest suite (40 tests): startup, health, validation, API, state, nodes, graph, order, report, failure, LLM config, DB-unavailable
-- [x] Minimal Next.js dashboard (research form, status polling, report display)
+- [x] Minimal Next.js dashboard (form, status polling, report display)
 - [x] Documentation (README, architecture, agent-design, roadmap)
+
+## Phase 1.5 — Integration Verification & Database Persistence (complete)
+
+- [x] PostgreSQL 18 integration: `acis_db` / `acis_app`, password auth (scram-sha-256)
+- [x] SQLAlchemy ORM `Research` model with indexes and org ownership
+- [x] `ResearchRepository` with server-side organization isolation
+- [x] Alembic migration `0001_initial_research_tables` applied to `acis_db`
+- [x] In-memory store replaced by PostgreSQL-backed persistence (with in-memory fallback when DB unavailable)
+- [x] Safe transaction handling (`flush` + `commit` in service layer)
+- [x] LangGraph `AsyncPostgresSaver` checkpointing (async adapter over sync `PostgresSaver`)
+- [x] Thread-based research execution (`thread_id = research_id`)
+- [x] Checkpoint storage separate from business records
+- [x] Resume support (checkpoint retrieval via `aget_tuple`)
+- [x] New tests: 15 persistence/checkpoint/API tests (repository, cross-org isolation, status updates, migration, checkpoints, API persistence)
+- [x] Existing 40 tests remain green (fallback mode without DATABASE_URL)
 
 ## Phase 2 (planned)
 
-- [ ] Replace in-memory result store with SQLAlchemy-backed persistence + Alembic migrations
-- [ ] Add PostgreSQL + pgvector to `docker-compose.yml`; run migrations on startup
-- [ ] Replace mock agents with real LLM-backed agents (OpenRouter / DeepSeek) behind the LLM factory
+- [ ] Replace fallback in-memory store entirely with PostgreSQL (require DATABASE_URL in production)
 - [ ] Add authentication (JWT/session), RBAC, and organization-level tenant isolation
 - [ ] Add conditional routing (review gates) and parallel sub-agents in the LangGraph
+- [ ] Install pgvector extension on PostgreSQL; add vector columns for semantic search
 - [ ] Add rate limiting, request tracing, and structured audit logging
 
 ## Phase 3 (planned)
@@ -34,6 +48,25 @@
 
 ## Immediate next steps to run locally
 
-1. Backend: `cd backend && cp .env.example .env && pip install -r requirements.txt && uvicorn app.main:app --reload`
-2. Frontend: `cd frontend && npm install && npm run dev` (requires network access to npm)
-3. Open `http://localhost:3000` and submit a research request; verify `http://localhost:8000/api/v1/health`.
+1. Backend:
+   ```
+   cd backend
+   cp .env.example .env
+   # Set DATABASE_URL=postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db
+   pip install -r requirements.txt
+   alembic upgrade head
+   uvicorn app.main:app --reload
+   ```
+2. Tests:
+   ```
+   cd backend
+   # Without DATABASE_URL (fallback mode): 40 tests
+   pytest
+   # With DATABASE_URL (persistence mode): 15 additional tests
+   DATABASE_URL=postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db pytest
+   ```
+3. Frontend:
+   ```
+   cd frontend
+   npm install && npm run dev   # requires working npm registry access
+   ```

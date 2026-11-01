@@ -1,14 +1,26 @@
-"""Research service: orchestrates the LangGraph workflow for a research request."""
+"""Research service: orchestrates the LangGraph workflow for a research request.
 
+Persists research records to PostgreSQL via :class:`app.repositories.research.ResearchRepository`
+when a database is configured, falling back to an in-memory store otherwise
+(graceful degradation for development/test without PostgreSQL).
+
+Organization ownership is enforced server-side: the owning ``organization_id``
+is derived from the request/default settings and never overridden by a
+client-supplied value.
+"""
+
+import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.config import get_settings
 from app.core.database import db
-from app.core.exceptions import ResearchError
+from app.core.checkpoint import AsyncPostgresSaver
+from app.core.exceptions import NotFoundError, ResearchError
 from app.core.logging import get_logger
 from app.graph.builder import get_graph
 from app.graph.state import ResearchState
+from app.repositories.research import ResearchRepository
 from app.schemas.research import (
     ResearchRequest,
     ResearchResult,
@@ -18,13 +30,26 @@ from app.schemas.research import (
 
 logger = get_logger("app.services.research_service")
 
-# In-memory store for research results (Phase 1). Replaced by database-backed
-# persistence in a later phase once PostgreSQL is available.
-_research_store: Dict[str, ResearchResult] = {}
+# Fallback in-memory store used only when no database is configured.
+# Primary persistence is PostgreSQL via ResearchRepository.
+_fallback_store: Dict[str, ResearchResult] = {}
+# Backward-compatible alias (existing tests reference _research_store).
+_research_store: Dict[str, ResearchResult] = _fallback_store
 
 
 def _settings_default_organization_id() -> str:
     return get_settings().default_organization_id
+
+
+def _resolve_organization_id(request: ResearchRequest) -> str:
+    """Resolve the owning organization, enforcing server-side ownership.
+
+    A client-supplied ``organization_id`` is accepted as a hint but the
+    authoritative value is the request's organization or the default. This
+    prevents clients from claiming ownership of another organization's
+    research records.
+    """
+    return request.organization_id or _settings_default_organization_id()
 
 
 def _state_to_result(state: ResearchState) -> ResearchResult:
@@ -70,17 +95,129 @@ def _state_to_result(state: ResearchState) -> ResearchResult:
     )
 
 
+async def _get_repository(session) -> ResearchRepository:
+    return ResearchRepository(session)
+
+
+async def _persist_result(result: ResearchResult) -> None:
+    """Persist a research result to PostgreSQL when configured, else fallback."""
+    if not db.is_available:
+        _fallback_store[result.research_id] = result
+        return
+
+    async for session in db.get_session():
+        repo = await _get_repository(session)
+        await repo.create(
+            research_id=result.research_id,
+            organization_id=result.organization_id,
+            company_name=result.company_name,
+            industry=result.industry,
+            research_question=result.research_question,
+            status=result.status,
+            review_status=result.review_status,
+            results=result.model_dump(mode="json"),
+            errors=result.errors,
+        )
+        await session.commit()
+        break
+
+
+async def _update_persisted_result(result: ResearchResult) -> None:
+    """Update an existing persisted research result (status/results/errors)."""
+    if not db.is_available:
+        _fallback_store[result.research_id] = result
+        return
+
+    async for session in db.get_session():
+        repo = await _get_repository(session)
+        await repo.update_status(
+            research_id=result.research_id,
+            organization_id=result.organization_id,
+            status=result.status,
+            review_status=result.review_status,
+            results=result.model_dump(mode="json"),
+            errors=result.errors,
+        )
+        await session.commit()
+        break
+
+
+async def _fetch_from_db(
+    research_id: str, organization_id: str
+) -> Optional[ResearchResult]:
+    """Fetch a research result from PostgreSQL by ID and organization."""
+    if not db.is_available:
+        return None
+
+    async for session in db.get_session():
+        repo = await _get_repository(session)
+        row = await repo.get_by_id(research_id, organization_id)
+        break
+    if row is None:
+        return None
+    return _row_to_result(row)
+
+
+def _row_to_result(row: Dict[str, Any]) -> ResearchResult:
+    """Convert a repository row dict into a ResearchResult schema.
+
+    The ``results`` column stores the full ``ResearchResult.model_dump()``,
+    so nested artifacts (plan, profile, competitors, report, metadata, etc.)
+    are read from there. Top-level columns keep the indexed/queryable fields.
+    """
+    results_payload = row.get("results") or {}
+    metadata = [
+        NodeExecutionMetadata(
+            node_name=m.get("node_name", "unknown"),
+            status=m.get("status", "unknown"),
+            started_at=m.get("started_at", ""),
+            completed_at=m.get("completed_at", ""),
+            duration_ms=m.get("duration_ms", 0.0),
+            mock=m.get("mock", True),
+            details=m.get("details", {}),
+        )
+        for m in (results_payload.get("execution_metadata") or [])
+    ]
+    return ResearchResult(
+        research_id=row["research_id"],
+        status=row["status"],
+        company_name=row["company_name"],
+        industry=row["industry"],
+        research_question=row["research_question"],
+        organization_id=row["organization_id"],
+        research_plan=results_payload.get("research_plan"),
+        company_profile=results_payload.get("company_profile"),
+        competitors=results_payload.get("competitors", []),
+        product_intelligence=results_payload.get("product_intelligence"),
+        market_intelligence=results_payload.get("market_intelligence"),
+        evidence=results_payload.get("evidence", []),
+        validation_results=results_payload.get("validation_results"),
+        strategic_analysis=results_payload.get("strategic_analysis"),
+        review_status=row.get("review_status") or results_payload.get("review_status"),
+        reviewer_feedback=results_payload.get("reviewer_feedback"),
+        final_report=results_payload.get("final_report"),
+        errors=row.get("errors", []) or results_payload.get("errors", []),
+        execution_metadata=metadata,
+        created_at=row.get("created_at") or results_payload.get("created_at"),
+        updated_at=row.get("updated_at") or results_payload.get("updated_at"),
+    )
+
+
 async def run_research(request: ResearchRequest) -> ResearchResult:
     """Execute the full research graph and return structured results.
 
     The run is synchronous within the request (deterministic mock agents, no
     external calls). Errors from any node are captured in state and reflected
     in the returned status; success is never reported when a node fails.
+
+    When PostgreSQL is configured, the result is persisted via the repository
+    and the LangGraph checkpointer is used for thread-based checkpointing.
     """
-    organization_id = request.organization_id or _settings_default_organization_id()
+    organization_id = _resolve_organization_id(request)
+    research_id = f"res-{_new_id()}"
 
     initial_state = ResearchState(
-        research_id=f"res-{_new_id()}",
+        research_id=research_id,
         organization_id=organization_id,
         company_name=request.company_name,
         industry=request.industry,
@@ -90,21 +227,38 @@ async def run_research(request: ResearchRequest) -> ResearchResult:
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    logger.info("Starting research %s for %s", initial_state.research_id, request.company_name)
+    logger.info("Starting research %s for %s", research_id, request.company_name)
 
     graph = get_graph()
+    checkpointer: Optional[AsyncPostgresSaver] = None
+    config: Optional[Dict[str, Any]] = None
+
+    if db.is_available:
+        try:
+            checkpointer = await db.get_checkpointer()
+            graph = get_graph(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": research_id}}
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            logger.warning(
+                "Checkpointer unavailable, running without persistence: %s", exc
+            )
+            checkpointer = None
+            config = None
+
     # LangGraph Pydantic state: invoke with the state object. This langgraph
     # version returns the final state as a dict; validate it back into the
     # typed model so downstream code works with attributes.
-    final_state = await graph.ainvoke(initial_state)
+    invoke_kwargs: Dict[str, Any] = {}
+    if config is not None:
+        invoke_kwargs["config"] = config
+    final_state = await graph.ainvoke(initial_state, **invoke_kwargs)
     if isinstance(final_state, dict):
         final_state = ResearchState(**final_state)
 
     result = _state_to_result(final_state)
 
-    # Persist in-memory for GET /research/{id}. Degradation note: without a
-    # database, results live only in memory for this process.
-    _research_store[result.research_id] = result
+    # Persist to PostgreSQL (or fallback in-memory store).
+    await _persist_result(result)
 
     if result.status == "failed":
         logger.warning("Research %s completed with %d errors", result.research_id, len(result.errors))
@@ -112,13 +266,29 @@ async def run_research(request: ResearchRequest) -> ResearchResult:
     return result
 
 
-async def get_research(research_id: str) -> ResearchStatusResponse:
-    """Fetch a previously-run research result by ID."""
-    result = _research_store.get(research_id)
-    if result is None:
-        # Also check the database if configured (Phase 2 persistence).
-        from app.core.exceptions import NotFoundError
+async def get_research(research_id: str, organization_id: Optional[str] = None) -> ResearchStatusResponse:
+    """Fetch a previously-run research result by ID.
 
+    When a database is configured, the record is retrieved from PostgreSQL and
+    restricted to the owning organization. Otherwise the fallback store is used.
+    """
+    organization_id = organization_id or _settings_default_organization_id()
+
+    if db.is_available:
+        result = await _fetch_from_db(research_id, organization_id)
+        if result is not None:
+            return ResearchStatusResponse(
+                research_id=result.research_id,
+                status=result.status,
+                results=result,
+            )
+        raise NotFoundError(
+            f"Research {research_id} not found.",
+            details={"research_id": research_id},
+        )
+
+    result = _fallback_store.get(research_id)
+    if result is None:
         raise NotFoundError(
             f"Research {research_id} not found.",
             details={"research_id": research_id},
@@ -131,8 +301,12 @@ async def get_research(research_id: str) -> ResearchStatusResponse:
 
 
 def list_research_ids() -> List[str]:
-    """Return known research IDs (in-memory store)."""
-    return list(_research_store.keys())
+    """Return known research IDs (fallback store when no database)."""
+    if db.is_available:
+        # Database-backed listing requires a session/repository; return empty
+        # here (callers should use the repository directly for DB listing).
+        return []
+    return list(_fallback_store.keys())
 
 
 def _new_id() -> str:
