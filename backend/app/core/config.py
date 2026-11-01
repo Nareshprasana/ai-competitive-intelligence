@@ -73,6 +73,18 @@ class Settings(BaseSettings):
     search_max_pages: int = Field(
         default=10, ge=1, description="Maximum pages fetched per research run."
     )
+    competitor_max_candidates: int = Field(
+        default=15, ge=1, le=100,
+        description="Maximum competitor candidates evaluated per research run.",
+    )
+    competitor_max_search_queries: int = Field(
+        default=6, ge=1, le=20,
+        description="Maximum additional searches for competitor discovery.",
+    )
+    competitor_max_tokens: int = Field(
+        default=2048, ge=256, le=4096,
+        description="Maximum LLM output tokens for competitor extraction.",
+    )
     duckduckgo_base_url: str = Field(
         default="https://html.duckduckgo.com/html/",
         description="DuckDuckGo HTML endpoint.",

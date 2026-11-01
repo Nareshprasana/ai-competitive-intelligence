@@ -1,7 +1,12 @@
 """Tests for the research service layer (services/research_service.py)."""
 
 import asyncio
+from importlib import import_module
+import pytest
 
+from app.agents.company_researcher import CompanyResearcherAgent
+from app.agents.competitor_researcher import CompetitorResearcherAgent
+from app.tools.search.providers.mock import MockSearchProvider
 from app.schemas.research import ResearchRequest
 from app.services.research_service import (
     run_research,
@@ -9,6 +14,44 @@ from app.services.research_service import (
     list_research_ids,
     _research_store,
 )
+
+
+class UnavailableLLMClient:
+    def is_available(self):
+        return False
+
+    async def close(self):
+        pass
+
+
+async def _unavailable_llm(self):
+    return UnavailableLLMClient()
+
+
+@pytest.fixture(autouse=True)
+def disable_live_llm(monkeypatch):
+    monkeypatch.setattr(CompanyResearcherAgent, "_get_llm_client", _unavailable_llm)
+    monkeypatch.setattr(CompetitorResearcherAgent, "_get_llm_client", _unavailable_llm)
+    company_node = import_module("app.graph.nodes.company_researcher")
+    competitor_node = import_module("app.graph.nodes.competitor_discovery_node")
+    monkeypatch.setattr(
+        company_node,
+        "_build_search_provider",
+        lambda: MockSearchProvider(),
+    )
+    monkeypatch.setattr(
+        competitor_node,
+        "_build_search_provider",
+        lambda: MockSearchProvider(),
+    )
+    monkeypatch.setattr(company_node, "_persist_company_research", _skip_persistence)
+    monkeypatch.setattr(
+        competitor_node, "_persist_competitor_discovery", _skip_persistence
+    )
+
+
+async def _skip_persistence(**kwargs):
+    return None
 
 
 def test_store_starts_empty():
@@ -40,7 +83,7 @@ def test_run_research_returns_structured_result():
         "initialize_research",
         "research_planner",
         "company_researcher",
-        "competitor_discovery_mock",
+        "competitor_discovery",
         "evidence_validator_mock",
         "strategic_analyst_mock",
         "report_generator_mock",

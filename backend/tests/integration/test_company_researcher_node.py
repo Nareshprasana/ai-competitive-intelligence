@@ -1,10 +1,42 @@
 """Integration tests for the company_researcher LangGraph node."""
 
 import asyncio
+from importlib import import_module
+import pytest
 
+from app.agents.company_researcher import CompanyResearcherAgent
+from app.tools.search.providers.mock import MockSearchProvider
 from app.graph.builder import build_graph
 from app.graph.state import ResearchState
 from app.graph.nodes.company_researcher import company_researcher
+
+
+class UnavailableLLMClient:
+    def is_available(self):
+        return False
+
+    async def close(self):
+        pass
+
+
+async def _unavailable_llm(self):
+    return UnavailableLLMClient()
+
+
+@pytest.fixture(autouse=True)
+def disable_live_llm(monkeypatch):
+    monkeypatch.setattr(CompanyResearcherAgent, "_get_llm_client", _unavailable_llm)
+    company_node = import_module("app.graph.nodes.company_researcher")
+    monkeypatch.setattr(
+        company_node,
+        "_build_search_provider",
+        lambda: MockSearchProvider(),
+    )
+    monkeypatch.setattr(company_node, "_persist_company_research", _skip_persistence)
+
+
+async def _skip_persistence(**kwargs):
+    return None
 
 
 async def _run_graph_with_mock_agent(monkeypatch):

@@ -9,13 +9,13 @@ import asyncio
 from app.graph.nodes import (
     initialize_research,
     research_planner,
-    company_researcher_mock,
-    competitor_discovery_mock,
     evidence_validator_mock,
     strategic_analyst_mock,
     report_generator_mock,
     finalize_research,
 )
+from app.graph.nodes.company_researcher_mock import company_researcher_mock
+from app.graph.nodes.competitor_discovery_mock import competitor_discovery_mock
 from app.graph.state import ResearchState
 
 

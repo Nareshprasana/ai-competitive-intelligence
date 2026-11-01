@@ -1,11 +1,12 @@
 """DuckDuckGo HTML search provider."""
 
-import re
+import ipaddress
 from typing import Any, Dict, List, Optional
 
 import httpx
 from selectolax.lexbor import LexborHTMLParser
 
+from app.agents.base import validate_url_for_fetch
 from app.tools.search.base import SearchProvider
 from app.tools.search.schemas import SearchQuery, SearchResult
 
@@ -23,24 +24,24 @@ REQUEST_TIMEOUT_SECONDS = 15
 
 def _is_private_or_internal(url: str) -> bool:
     try:
-        from urllib.parse import urlparse
+        from urllib.parse import urlsplit
 
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             return True
-        if host.endswith(".localhost"):
+        if parsed.username or parsed.password:
             return True
-        if re.match(r"^10\.", host):
+        if parsed.port not in (None, 80, 443):
             return True
-        if re.match(r"^172\.(1[6-9]|2[0-9]|3[01])\.", host):
+        host = parsed.hostname.rstrip(".").lower()
+        if host == "localhost" or host.endswith(".localhost"):
             return True
-        if re.match(r"^192\.168\.", host):
-            return True
-        if re.match(r"^169\.254\.", host):
-            return True
+        try:
+            return not ipaddress.ip_address(host).is_global
+        except ValueError:
+            pass
         return False
-    except Exception:
+    except (ValueError, TypeError):
         return True
 
 
@@ -66,6 +67,8 @@ class DuckDuckGoProvider(SearchProvider):
         self.user_agent = user_agent
         self.timeout_seconds = timeout_seconds
         self.max_results = max_results
+        if not validate_url_for_fetch(base_url):
+            raise ValueError("DuckDuckGo base_url must be a public http/https URL.")
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -73,20 +76,15 @@ class DuckDuckGoProvider(SearchProvider):
             self._client = httpx.AsyncClient(
                 headers={"User-Agent": self.user_agent},
                 timeout=httpx.Timeout(self.timeout_seconds),
-                follow_redirects=True,
+                follow_redirects=False,
             )
         return self._client
 
     async def search(self, query: SearchQuery) -> List[SearchResult]:
         client = await self._get_client()
         params = {"q": query.query}
-        try:
-            response = await client.get(self.base_url, params=params)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                "DuckDuckGo search failed for query '%s': %s" % (query.query, exc)
-            ) from exc
+        response = await client.get(self.base_url, params=params)
+        response.raise_for_status()
 
         html = response.text[:MAX_RESPONSE_BYTES]
         return self._parse_results(html, query)

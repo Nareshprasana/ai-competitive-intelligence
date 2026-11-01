@@ -186,6 +186,9 @@ class CompanyResearcherAgent(BaseAgent):
         return {
             "company_profile": profile_dict,
             "evidence": evidence_dicts,
+            "search_results": [
+                result.model_dump(mode="json") for result in all_results
+            ],
             "_metadata_details": {
                 "company": company_name,
                 "search_queries_executed": len(queries),

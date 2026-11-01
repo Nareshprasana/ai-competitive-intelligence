@@ -5,6 +5,16 @@ from app.graph.state import ResearchState
 
 
 async def _strategic_analyst(state: ResearchState) -> dict:
+    threat_title = (
+        "Established competitors"
+        if state.competitors
+        else "No qualified competitors identified"
+    )
+    threat_description = (
+        "Mock threat: multiple direct competitors identified."
+        if state.competitors
+        else "Competitor discovery found no candidates meeting qualification thresholds."
+    )
     analysis = {
         "opportunities": [
             {
@@ -17,8 +27,8 @@ async def _strategic_analyst(state: ResearchState) -> dict:
         "threats": [
             {
                 "id": "thr-1",
-                "title": "Established competitors",
-                "description": "Mock threat: multiple direct competitors identified.",
+                "title": threat_title,
+                "description": threat_description,
                 "severity": "medium",
             }
         ],
@@ -39,8 +49,6 @@ async def _strategic_analyst(state: ResearchState) -> dict:
 
 async def strategic_analyst_mock(state: ResearchState) -> dict:
     """Return deterministic mock strategic analysis (not real analysis)."""
-    if not state.competitors:
-        raise ValueError("Competitor data is required for strategic analysis.")
     return await run_node(
         node_name="strategic_analyst_mock",
         state=state,

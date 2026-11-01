@@ -33,6 +33,9 @@ class ResearchState(BaseModel):
     # Graph-produced artifacts
     research_plan: Optional[Dict[str, Any]] = None
     company_profile: Optional[Dict[str, Any]] = None
+    search_results: Annotated[List[Dict[str, Any]], operator.add] = Field(
+        default_factory=list
+    )
     competitors: Annotated[List[Dict[str, Any]], operator.add] = Field(
         default_factory=list
     )

@@ -19,13 +19,14 @@ from app.graph.state import ResearchState
 from app.graph.nodes import (
     initialize_research,
     research_planner,
-    company_researcher_mock,
-    competitor_discovery_mock,
     evidence_validator_mock,
     strategic_analyst_mock,
     report_generator_mock,
     finalize_research,
 )
+from app.graph.nodes.company_researcher_mock import company_researcher_mock
+from app.graph.nodes.competitor_discovery_mock import competitor_discovery_mock
+from app.graph.state import ResearchState
 
 # Ensure settings are re-read with DATABASE_URL from the environment.
 get_settings.cache_clear()
@@ -35,9 +36,10 @@ db._session_factory = None
 db._available = False
 db._checkpointer = None
 
-TEST_DATABASE_URL = os.getenv(
-    "ACIS_TEST_DATABASE_URL",
-    "postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db",
+TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
+pytestmark = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="PostgreSQL tests require ACIS_TEST_DATABASE_URL or DATABASE_URL.",
 )
 # libpq form for psycopg-based checkpointer.
 CHECKPOINT_CONN_STRING = TEST_DATABASE_URL.replace(

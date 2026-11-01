@@ -16,11 +16,14 @@ async def _evidence_validator(state: ResearchState) -> dict:
         },
         {
             "evidence_id": "ev-2",
-            "claim": "Three direct competitors were identified.",
-            "source": "competitor_discovery_mock",
+            "claim": (
+                f"{len(state.competitors)} competitors met the discovery "
+                "qualification threshold."
+            ),
+            "source": "competitor_discovery",
             "validated": True,
-            "confidence": 0.85,
-            "note": "Deterministic mock evidence; not independently verified.",
+            "confidence": 0.5,
+            "note": "Mock validation placeholder; use competitor evidence sources for verification.",
         },
     ]
     validation_results = {

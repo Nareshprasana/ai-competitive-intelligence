@@ -2,8 +2,8 @@
 
 Builds the linear research workflow:
 
-    START -> initialize_research -> research_planner -> company_researcher_mock
-    -> competitor_discovery_mock -> evidence_validator_mock -> strategic_analyst_mock
+    START -> initialize_research -> research_planner -> company_researcher
+    -> competitor_discovery -> evidence_validator_mock -> strategic_analyst_mock
     -> report_generator_mock -> finalize_research -> END
 
 Node logic lives in ``app.graph.nodes``; this module only wires the graph.
@@ -16,16 +16,14 @@ from typing import Any, Optional
 from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import ResearchState
-from app.graph.nodes import (
-    initialize_research,
-    research_planner,
-    company_researcher,
-    competitor_discovery_mock,
-    evidence_validator_mock,
-    strategic_analyst_mock,
-    report_generator_mock,
-    finalize_research,
-)
+from app.graph.nodes.initialize_research import initialize_research
+from app.graph.nodes.research_planner import research_planner
+from app.graph.nodes.company_researcher import company_researcher
+from app.graph.nodes.competitor_discovery_node import competitor_discovery
+from app.graph.nodes.evidence_validator_mock import evidence_validator_mock
+from app.graph.nodes.strategic_analyst_mock import strategic_analyst_mock
+from app.graph.nodes.report_generator_mock import report_generator_mock
+from app.graph.nodes.finalize_research import finalize_research
 
 
 # Ordered node names matching the required workflow.
@@ -33,7 +31,7 @@ NODE_ORDER = [
     "initialize_research",
     "research_planner",
     "company_researcher",
-    "competitor_discovery_mock",
+    "competitor_discovery",
     "evidence_validator_mock",
     "strategic_analyst_mock",
     "report_generator_mock",
@@ -44,7 +42,7 @@ _NODES = {
     "initialize_research": initialize_research,
     "research_planner": research_planner,
     "company_researcher": company_researcher,
-    "competitor_discovery_mock": competitor_discovery_mock,
+    "competitor_discovery": competitor_discovery,
     "evidence_validator_mock": evidence_validator_mock,
     "strategic_analyst_mock": strategic_analyst_mock,
     "report_generator_mock": report_generator_mock,

@@ -13,8 +13,8 @@ async def _research_planner(state: ResearchState) -> dict:
         "steps": [
             "initialize_research",
             "research_planner",
-            "company_researcher_mock",
-            "competitor_discovery_mock",
+            "company_researcher",
+            "competitor_discovery",
             "evidence_validator_mock",
             "strategic_analyst_mock",
             "report_generator_mock",

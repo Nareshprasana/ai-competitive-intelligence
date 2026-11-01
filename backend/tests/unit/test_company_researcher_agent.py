@@ -40,6 +40,14 @@ class FakeLLMClient:
         pass
 
 
+class UnavailableLLMClient:
+    def is_available(self):
+        return False
+
+    async def close(self):
+        pass
+
+
 def _make_agent(profile=None):
     provider = MockSearchProvider()
     agent = CompanyResearcherAgent(
@@ -47,6 +55,8 @@ def _make_agent(profile=None):
     )
     if profile is not None:
         agent._llm_client = FakeLLMClient(profile)
+    else:
+        agent._llm_client = UnavailableLLMClient()
     return agent, provider
 
 
@@ -73,15 +83,13 @@ def test_agent_research_with_llm():
     assert result["company_profile"]["company_name"] == "Acme Corp"
     assert result["company_profile"]["industry"] == "AI Software"
     assert len(result["evidence"]) > 0
+    assert result["search_results"]
     assert result["_metadata_details"]["llm_available"] is True
 
 
 def test_agent_research_without_llm():
     """Without LLM config, falls back to search-snippet profile."""
     agent, provider = _make_agent(profile=None)
-    # Remove the fake LLM client to simulate unconfigured LLM
-    agent._llm_client = None
-
     result = asyncio.run(
         agent.research(
             company_name="Acme Corp",

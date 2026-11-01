@@ -1,8 +1,8 @@
-# Architecture — ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A
+# Architecture — ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A + Phase 2B
 
 ## Overview
 
-ACIS is a modular monorepo. The backend is a FastAPI service orchestrating a LangGraph `StateGraph` of agents. Phase 2A replaces the deterministic mock `company_researcher` node (real AI-powered Company Research Agent) with a real AI-powered Company Research Agent that investigates real companies using external search + LLM extraction, attaches evidence with provenance, validates claims, and persists results to PostgreSQL. The frontend is a Next.js App Router dashboard that calls the backend. No LLM calls are made during application import; no external API credits are consumed unless `OPENROUTER_API_KEY` and a live search provider are explicitly configured.
+ACIS is a modular monorepo. The backend is a FastAPI service orchestrating a LangGraph `StateGraph` of agents. Phase 2A adds real company research, and Phase 2B adds evidence-backed competitor discovery using the same search, LLM, and persistence infrastructure. The frontend is a Next.js App Router dashboard that calls the backend. No LLM calls are made during application import; no external API credits are consumed unless `OPENROUTER_API_KEY` and a live search provider are explicitly configured.
 
 ## High-level data flow
 
@@ -18,8 +18,8 @@ FastAPI (app/main.py)
      │       ├─► LangGraph StateGraph (graph/builder.py)
      │       │   ├─ initialize_research
      │       │   ├─ research_planner
-     │       │   ├─ company_researcher_mock
-     │       │   ├─ competitor_discovery_mock
+     │       │   ├─ company_researcher
+     │       │   ├─ competitor_discovery
      │       │   ├─ evidence_validator_mock
      │       │   ├─ strategic_analyst_mock
      │       │   ├─ report_generator_mock
@@ -51,6 +51,7 @@ GET /api/v1/research/{research_id}
 | `app/core/llm.py` | Provider-independent LLM factory (OpenRouter-compatible), lazy; real HTTP client with structured Pydantic output |
 | `app/agents/base.py` | Base agent: search budgeting, rate limiting, result caching, SSRF-safe URL validation, HTTP fetch with size limits/timeouts |
 | `app/agents/company_researcher.py` | Company Research Agent: query generation → search → retrieval → LLM extraction → evidence → validation → profile |
+| `app/agents/competitor_researcher.py` | Competitor discovery: shared research results → bounded search → extraction → source validation → overlap scoring |
 | `app/tools/search/base.py` | Abstract `SearchProvider` interface |
 | `app/tools/search/schemas.py` | `SearchResult`, `SearchQuery` Pydantic schemas |
 | `app/tools/search/providers/mock.py` | Deterministic mock provider (offline, no network, no credits) |
@@ -61,6 +62,9 @@ GET /api/v1/research/{research_id}
 | `app/models/company.py` | `CompanyProfile`, `EvidenceClaim` SQLAlchemy ORM models |
 | `app/repositories/company.py` | `CompanyRepository` with server-side organization isolation |
 | `app/repositories/evidence.py` | `EvidenceRepository` with server-side organization isolation |
+| `app/schemas/competitor.py` | Typed competitor classifications, factor values, and source evidence |
+| `app/models/competitor.py` | Organization/research-owned competitor and evidence records |
+| `app/repositories/competitor.py` | Organization-scoped competitor access and idempotent persistence support |
 | `app/graph/state.py` | Typed Pydantic `ResearchState` with `Annotated` list reducers |
 | `app/graph/nodes/` | Graph node implementations; `company_researcher` replaces `company_researcher_mock` |
 | `app/graph/builder.py` | StateGraph construction (optional checkpointer), separate from node logic |
@@ -69,6 +73,10 @@ GET /api/v1/research/{research_id}
 ## State (`ResearchState`)
 
 A Pydantic model carried through every node. List fields use `Annotated[T, operator.add]` reducers so values accumulate across nodes instead of being overwritten.
+
+The `company_researcher` node adds its normalized `search_results` to state.
+`competitor_discovery` reuses these results and evidence before making bounded
+additional searches.
 
 ## Persistent storage (`researches` table)
 
@@ -113,6 +121,43 @@ Without `DATABASE_URL`, the application starts normally. The SQLAlchemy engine i
 The `company_researcher` node runs the CompanyResearcherAgent through this pipeline:
 
 ```
+
+## Competitor Discovery Agent pipeline (Phase 2B)
+
+```
+Company profile, evidence, and reused search results
+    ↓
+Product/service and market/customer analysis
+    ↓
+Prioritized direct/indirect/emerging/substitute search
+    ↓
+Bounded external search and candidate extraction
+    ↓
+Exact-source attribution, deduplication, and evidence checks
+    ↓
+Weighted overlap scoring and category qualification
+    ↓
+Ranked profiles and PostgreSQL persistence
+```
+
+Qualification weights are product 0.20, service 0.15, customer 0.20,
+problem-space 0.20, geography 0.10, business model 0.10, and market positioning
+0.05. Each factor is a Jaccard keyword-overlap value; unavailable evidence is
+listed as unknown and contributes zero. Classification requires overlap evidence; weak
+or unrelated companies are excluded rather than automatically categorized as
+substitutes. Emerging status requires a recent-entry/growth signal in source
+text. Exact claims corroborated across sources are marked partially verified;
+conflicting source claims are retained with a conflicting status. Source URLs
+are accepted only from retrieved results, and page fetching
+blocks non-public addresses and revalidates redirects. Official company sites,
+regulatory filings, investor relations, press releases, industry reports, and
+credible publications are prioritized for profile evidence.
+
+Competitors and their evidence are stored in `competitors` and
+`competitor_evidence`. The schema scopes records to both organization and
+research, links competitors to their owning research, and uses a composite
+foreign key for evidence ownership. `company_key` prevents case/punctuation
+variants from duplicating a company within one research context.
 Research Request
     ↓
 Search Query Generation

@@ -84,6 +84,7 @@ async def _company_researcher(state: ResearchState) -> dict:
         return {
             "company_profile": company_profile,
             "evidence": evidence,
+            "search_results": result.get("search_results", []),
             "_metadata_details": details,
         }
     finally:

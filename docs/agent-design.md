@@ -1,4 +1,4 @@
-# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1 + 1.5 + 2A)
+# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1 + 1.5 + 2A + 2B)
 
 ## Design principles
 
@@ -16,7 +16,7 @@
 | `initialize_research` | Assigns/resolves `research_id`, marks run started | `research_id`, `review_status`, timestamps |
 | `research_planner` | Builds the research plan from inputs | `research_plan` (steps, focus areas) |
 | `company_researcher` | Real AI-powered company research: search + LLM extraction + evidence | `company_profile`, `evidence` |
-| `competitor_discovery_mock` | Mock competitor list (3 direct competitors) | `competitors` |
+| `competitor_discovery` | Evidence-backed competitor discovery and qualification | `competitors`, `evidence` |
 | `evidence_validator_mock` | Mock evidence + validation summary | `evidence`, `validation_results` |
 | `strategic_analyst_mock` | Mock opportunities/threats/recommendations | `strategic_analysis` |
 | `report_generator_mock` | Assembles the final report from prior artifacts | `final_report` |
@@ -34,9 +34,49 @@ The `company_researcher` node runs `CompanyResearcherAgent` through:
 6. **Validation** — conflict detection across sources; confidence scored editorially (0–1, not statistical certainty).
 7. **Persistence** — company profile and evidence claims stored in PostgreSQL, organization-isolated.
 
+## Competitor Discovery Agent pipeline (Phase 2B)
+
+The `competitor_discovery` node consumes the company profile, evidence, and
+search results from `company_researcher`. It reuses retrieved results, then
+performs a bounded set of additional searches for direct competitors,
+alternatives, emerging entrants, substitutes, and market landscape sources.
+LLM input explicitly treats retrieved content as untrusted; only citations
+whose exact URLs were retrieved are retained. Profile websites are kept only
+when the URL is public and the source host corroborates the company name.
+
+Qualification is deterministic and separate from LLM extraction. A weighted
+score uses product (0.20), service (0.15), customer (0.20), problem-space
+(0.20), geographic (0.10), business-model (0.10), and market-positioning
+(0.05) overlap. Text overlap uses Jaccard similarity over normalized keywords.
+Every factor value is returned (including zero); missing company/candidate data
+is separately listed in `unknown_information`.
+Category assignment also requires relevant overlap evidence; candidates with
+no supported product/customer/problem overlap are excluded rather than labeled
+as substitutes. Emerging classification additionally requires source text
+indicating recent entry or growth. The score is an analytical ranking, not an
+LLM-generated probability.
+
+Each profile separates evidence-backed source snippets, analytical overlap
+judgments, and unknown fields. A verbatim claim corroborated by distinct source
+domains is marked `partially_verified`; conflicting claims retain a
+`conflicting` status. Official company sites, regulatory filings, investor
+relations, press releases, industry reports, and credible publications are
+prioritized when selecting profile evidence. A single source is unverified.
+Competitor profiles and evidence are stored in organization- and
+research-scoped PostgreSQL tables. Competitors have a composite foreign key to
+their owning research and organization; evidence has a composite ownership
+foreign key to its competitor. Normalized company keys and deterministic
+evidence IDs make retries idempotent.
+
+Search and page budgets and candidate/token caps are configurable through
+`SEARCH_MAX_QUERIES`, `SEARCH_MAX_PAGES`, `COMPETITOR_MAX_CANDIDATES`,
+`COMPETITOR_MAX_SEARCH_QUERIES`, and `COMPETITOR_MAX_TOKENS`. The default
+search provider is deterministic mock data; live research requires explicit
+DuckDuckGo configuration and an OpenRouter API key for LLM extraction.
+
 ## State transitions
 
-Each node is `async (state: ResearchState) -> dict` returning a partial update. LangGraph merges updates into the Pydantic state. List fields (`competitors`, `evidence`, `errors`, `execution_metadata`) use `operator.add` reducers to accumulate.
+Each node is `async (state: ResearchState) -> dict` returning a partial update. LangGraph merges updates into the Pydantic state. List fields (`search_results`, `competitors`, `evidence`, `errors`, `execution_metadata`) use `operator.add` reducers to accumulate.
 
 ## Error handling
 
@@ -58,7 +98,7 @@ Each node is `async (state: ResearchState) -> dict` returning a partial update. 
 
 - **Conditional routing**: insert a review gate after `report_generator_mock`.
 - **Parallel agents**: branch from `research_planner` into independent subgraphs, then join.
-- **Remaining real agents**: replace `competitor_discovery_mock`, `evidence_validator_mock`, `strategic_analyst_mock`, `report_generator_mock` with real LLM-backed agents once `OPENROUTER_API_KEY` is configured.
+- **Remaining real agents**: replace `evidence_validator_mock`, `strategic_analyst_mock`, and `report_generator_mock` with real agents.
 - **Auth/RBAC**: `organization_id` on `ResearchState` enables tenant isolation; repository already enforces org-scoped queries.
 
 ## Why mocks in Phase 1

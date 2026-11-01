@@ -6,9 +6,11 @@ failures. No LLM calls happen at import time.
 """
 
 import asyncio
-import re
+import ipaddress
+import socket
 import time
 from typing import Any, Callable, Dict, List, Optional, TypeVar
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -70,31 +72,43 @@ class SearchResultCache:
 
 def validate_url_for_fetch(url: str) -> bool:
     """SSRF-safe URL validation. Returns True only for public http/https URLs."""
-    from urllib.parse import urlparse
-
     try:
-        parsed = urlparse(url)
+        parsed = urlsplit(url)
         if parsed.scheme not in ("http", "https"):
             return False
-        host = (parsed.hostname or "").lower()
-        if not host:
+        if parsed.username or parsed.password or not parsed.hostname:
             return False
-        if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        if parsed.port not in (None, 80, 443):
             return False
+        host = parsed.hostname.rstrip(".").lower()
         if host.endswith(".localhost"):
             return False
-        # Block private IPv4 ranges (RFC 1918).
-        if re.match(r"^10\.", host):
-            return False
-        if re.match(r"^172\.(1[6-9]|2[0-9]|3[01])\.", host):
-            return False
-        if re.match(r"^192\.168\.", host):
-            return False
-        if re.match(r"^169\.254\.", host):
+        try:
+            return ipaddress.ip_address(host).is_global
+        except ValueError:
+            pass
+        if host in ("localhost",) or "." not in host:
             return False
         return True
-    except Exception:
+    except (ValueError, TypeError):
         return False
+
+
+async def _host_resolves_publicly(host: str) -> bool:
+    """Reject hostnames with any non-public DNS answer before making a request."""
+    try:
+        addresses = await asyncio.to_thread(
+            socket.getaddrinfo, host, None, type=socket.SOCK_STREAM
+        )
+    except OSError:
+        return False
+    resolved = set()
+    try:
+        for address in addresses:
+            resolved.add(ipaddress.ip_address(address[4][0]))
+    except (ValueError, IndexError):
+        return False
+    return bool(resolved) and all(address.is_global for address in resolved)
 
 
 async def fetch_page(
@@ -113,18 +127,40 @@ async def fetch_page(
         logger.warning("Blocked fetch of non-public URL: %s", url)
         return None
 
-    try:
-        response = await client.get(url, timeout=timeout_seconds)
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        logger.warning("Fetch failed for %s: %s", url, exc)
-        return None
-
-    body = response.content[:max_bytes]
-    try:
-        return body.decode("utf-8", errors="replace")
-    except Exception:
-        return None
+    current_url = url
+    for _ in range(6):
+        parsed = urlsplit(current_url)
+        if not await _host_resolves_publicly(parsed.hostname or ""):
+            logger.warning("Blocked fetch for host resolving to a non-public address.")
+            return None
+        try:
+            async with client.stream(
+                "GET",
+                current_url,
+                timeout=timeout_seconds,
+                follow_redirects=False,
+            ) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        return None
+                    current_url = urljoin(current_url, location)
+                    if not validate_url_for_fetch(current_url):
+                        logger.warning("Blocked redirect to a non-public URL.")
+                        return None
+                    continue
+                response.raise_for_status()
+                chunks = bytearray()
+                async for chunk in response.aiter_bytes():
+                    chunks.extend(chunk[: max_bytes - len(chunks)])
+                    if len(chunks) >= max_bytes:
+                        break
+                return bytes(chunks).decode("utf-8", errors="replace")
+        except httpx.HTTPError as exc:
+            logger.warning("Fetch failed for %s: %s", current_url, exc)
+            return None
+    logger.warning("Blocked fetch after too many redirects.")
+    return None
 
 
 async def retry_async(
@@ -227,6 +263,8 @@ class BaseAgent:
         self, url: str
     ) -> Optional[str]:
         """Fetch a page with budget enforcement."""
+        if getattr(self.search_provider, "name", "") == "mock":
+            return None
         if self._pages_fetched >= self.budget.max_pages_fetched:
             logger.warning("Page fetch budget exhausted (%d pages)", self._pages_fetched)
             return None

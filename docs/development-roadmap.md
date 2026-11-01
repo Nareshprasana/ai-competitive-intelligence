@@ -51,6 +51,17 @@
 - [x] Existing tests remain green (fallback mode without DATABASE_URL)
 - [x] Persistence tests pass (with DATABASE_URL)
 
+## Phase 2B — Competitor Discovery Agent
+
+- [x] Replace `competitor_discovery_mock` in the active graph with a real discovery node
+- [x] Reuse company research profiles, evidence, and search results
+- [x] Add typed direct, indirect, emerging, and substitute competitor schemas
+- [x] Add deterministic weighted overlap scoring and evidence-based qualification gates
+- [x] Validate citations against retrieved source URLs and retain source snippets
+- [x] Add organization/research-scoped competitor and evidence persistence
+- [x] Add bounded search/candidate/token settings and checkpoint-compatible state updates
+- [x] Add mocked unit/integration coverage and update agent/architecture docs
+
 ## Phase 2 (planned)
 
 - [ ] Replace fallback in-memory store entirely with PostgreSQL (require DATABASE_URL in production)

@@ -13,7 +13,7 @@ added later.
 """
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
@@ -55,6 +55,11 @@ class Research(Base):
     __table_args__ = (
         # Composite index for the most common lookup: org + status.
         sa.Index("ix_researches_org_status", "organization_id", "status"),
+        sa.UniqueConstraint(
+            "research_id",
+            "organization_id",
+            name="uq_researches_research_org",
+        ),
     )
 
 
