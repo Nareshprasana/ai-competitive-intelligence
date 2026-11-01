@@ -10,7 +10,7 @@ from app.graph.state import ResearchState
 EXPECTED_ORDER = [
     "initialize_research",
     "research_planner",
-    "company_researcher_mock",
+    "company_researcher",
     "competitor_discovery_mock",
     "evidence_validator_mock",
     "strategic_analyst_mock",
@@ -46,7 +46,10 @@ def test_full_graph_execution_all_nodes_completed():
     order = [m["node_name"] for m in final.execution_metadata]
     assert order == EXPECTED_ORDER
     assert all(m["status"] == "completed" for m in final.execution_metadata)
-    assert all(m["mock"] is True for m in final.execution_metadata)
+    # company_researcher is a real agent (mock=False); all others are mocks.
+    mock_flags = [m["mock"] for m in final.execution_metadata]
+    assert mock_flags.count(False) == 1
+    assert mock_flags.count(True) == 7
     assert final.final_report is not None
     assert final.final_report["company"] == "Acme Corp"
 
@@ -65,13 +68,13 @@ def test_graph_never_reports_success_when_node_fails(monkeypatch):
 
     async def _failing_wrapped(state):
         return await run_node(
-            node_name="company_researcher_mock",
+            node_name="company_researcher",
             state=state,
             node_fn=_failing_inner,
-            mock=True,
+            mock=False,
         )
 
-    monkeypatch.setitem(builder_module._NODES, "company_researcher_mock", _failing_wrapped)
+    monkeypatch.setitem(builder_module._NODES, "company_researcher", _failing_wrapped)
 
     g = build_graph()
     state = ResearchState(
@@ -88,9 +91,9 @@ def test_graph_never_reports_success_when_node_fails(monkeypatch):
     # Overall status must reflect the failure (never report success).
     assert final.review_status == "failed"
     assert len(final.errors) >= 1
-    assert any(e["node_name"] == "company_researcher_mock" for e in final.errors)
+    assert any(e["node_name"] == "company_researcher" for e in final.errors)
     # Metadata should record the failure.
-    failed = [m for m in final.execution_metadata if m["node_name"] == "company_researcher_mock"]
+    failed = [m for m in final.execution_metadata if m["node_name"] == "company_researcher"]
     assert failed and failed[0]["status"] == "failed"
 
 

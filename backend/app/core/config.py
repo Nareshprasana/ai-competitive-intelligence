@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     # --- Organization / tenant isolation (future auth/RBAC) ---
     default_organization_id: str = Field(default="org-dev")
 
+    # --- Search provider (company research agent) ---
+    search_provider: str = Field(
+        default="mock", description="Search provider: 'mock' or 'duckduckgo'."
+    )
+    search_max_queries: int = Field(
+        default=8, ge=1, description="Maximum search queries per research run."
+    )
+    search_max_pages: int = Field(
+        default=10, ge=1, description="Maximum pages fetched per research run."
+    )
+    duckduckgo_base_url: str = Field(
+        default="https://html.duckduckgo.com/html/",
+        description="DuckDuckGo HTML endpoint.",
+    )
+
     @property
     def is_llm_configured(self) -> bool:
         """True only when an API key is explicitly provided."""
@@ -72,6 +87,11 @@ class Settings(BaseSettings):
     def is_database_configured(self) -> bool:
         """True only when a database URL is explicitly provided."""
         return bool(self.database_url)
+
+    @property
+    def search_provider_is_mock(self) -> bool:
+        """True when using the deterministic mock search provider (no network)."""
+        return self.search_provider.lower() == "mock"
 
 
 @lru_cache()

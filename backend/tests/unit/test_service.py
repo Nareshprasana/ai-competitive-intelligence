@@ -39,7 +39,7 @@ def test_run_research_returns_structured_result():
     assert [m.node_name for m in result.execution_metadata] == [
         "initialize_research",
         "research_planner",
-        "company_researcher_mock",
+        "company_researcher",
         "competitor_discovery_mock",
         "evidence_validator_mock",
         "strategic_analyst_mock",

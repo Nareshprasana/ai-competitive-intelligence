@@ -19,7 +19,7 @@ from app.graph.state import ResearchState
 from app.graph.nodes import (
     initialize_research,
     research_planner,
-    company_researcher_mock,
+    company_researcher,
     competitor_discovery_mock,
     evidence_validator_mock,
     strategic_analyst_mock,
@@ -32,7 +32,7 @@ from app.graph.nodes import (
 NODE_ORDER = [
     "initialize_research",
     "research_planner",
-    "company_researcher_mock",
+    "company_researcher",
     "competitor_discovery_mock",
     "evidence_validator_mock",
     "strategic_analyst_mock",
@@ -43,7 +43,7 @@ NODE_ORDER = [
 _NODES = {
     "initialize_research": initialize_research,
     "research_planner": research_planner,
-    "company_researcher_mock": company_researcher_mock,
+    "company_researcher": company_researcher,
     "competitor_discovery_mock": competitor_discovery_mock,
     "evidence_validator_mock": evidence_validator_mock,
     "strategic_analyst_mock": strategic_analyst_mock,

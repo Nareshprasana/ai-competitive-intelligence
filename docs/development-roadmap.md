@@ -31,6 +31,26 @@
 - [x] New tests: 15 persistence/checkpoint/API tests (repository, cross-org isolation, status updates, migration, checkpoints, API persistence)
 - [x] Existing 40 tests remain green (fallback mode without DATABASE_URL)
 
+## Phase 2A — Real Company Research Agent (complete)
+
+- [x] Search provider abstraction: `SearchProvider` interface, `SearchResult`/`SearchQuery` schemas
+- [x] Deterministic mock search provider (offline, no network, no credits) for tests
+- [x] DuckDuckGo HTML provider (free, no API key, SSRF-protected, size-limited)
+- [x] `CompanyProfile` / `CompanySize` Pydantic schemas
+- [x] `Evidence` / `EvidenceCollection` / `EvidenceType` / `VerificationStatus` schemas
+- [x] Evidence collection/validation: confidence scoring, conflict detection, source classification
+- [x] `BaseAgent`: search budgeting, rate limiting, result caching, SSRF-safe URL validation, HTTP fetch with size limits/timeouts
+- [x] `CompanyResearcherAgent`: full pipeline (query gen → search → retrieval → LLM extraction → evidence → validation → profile)
+- [x] Real OpenRouter LLM client: structured Pydantic output, retry logic, timeout/rate-limit handling, no import-time calls
+- [x] Search provider config: `SEARCH_PROVIDER`, `SEARCH_MAX_QUERIES`, `SEARCH_MAX_PAGES`, `DUCKDUCKGO_BASE_URL`
+- [x] `CompanyProfile` / `EvidenceClaim` SQLAlchemy ORM models with org isolation
+- [x] `CompanyRepository` / `EvidenceRepository` with server-side organization isolation
+- [x] Alembic migration `0002_company_profiles` (`company_profiles` + `evidence_claims` tables)
+- [x] `company_researcher` node replaces `company_researcher_mock` in LangGraph (mock retained for back-compat)
+- [x] New tests: ~23 unit/integration tests (search, schemas, evidence, agent, LLM, persistence, LangGraph integration)
+- [x] Existing tests remain green (fallback mode without DATABASE_URL)
+- [x] Persistence tests pass (with DATABASE_URL)
+
 ## Phase 2 (planned)
 
 - [ ] Replace fallback in-memory store entirely with PostgreSQL (require DATABASE_URL in production)

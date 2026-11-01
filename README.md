@@ -1,8 +1,8 @@
 # AI Competitive Intelligence System (ACIS)
 
-A production-oriented AI Competitive Intelligence system built with **LangGraph**, **FastAPI**, **PostgreSQL + pgvector**, and **Next.js**. Phase 0 + Phase 1 deliver a functioning multi-agent backend with deterministic mock agents (no LLM credits consumed). Phase 1.5 adds persistent research storage (PostgreSQL + SQLAlchemy repositories + Alembic migrations) and LangGraph PostgreSQL checkpointing, plus a minimal Next.js dashboard that talks to the real backend.
+A production-oriented AI Competitive Intelligence system built with **LangGraph**, **FastAPI**, **PostgreSQL + pgvector**, and **Next.js**. Phase 0 + Phase 1 deliver a functioning multi-agent backend with deterministic mock agents (no LLM credits consumed). Phase 1.5 adds persistent research storage (PostgreSQL + SQLAlchemy repositories + Alembic migrations) and LangGraph PostgreSQL checkpointing. Phase 2A replaces the mock company researcher with a real AI-powered Company Research Agent that investigates real companies via search + LLM extraction, attaches evidence with provenance, and persists to PostgreSQL. A minimal Next.js dashboard talks to the real backend.
 
-> **Status:** Phase 0 + Phase 1 + Phase 1.5 complete (backend fully tested: 55 tests; frontend code complete — see "Frontend" below for a verification limitation).
+> **Status:** Phase 0 + Phase 1 + Phase 1.5 + Phase 2A complete (backend fully tested: ~78 tests; frontend code complete — see "Frontend" below for a verification limitation).
 
 ## Repository structure
 
@@ -17,6 +17,9 @@ ai-competitive-intelligence/
       repositories/     # SQLAlchemy data-access repositories
       schemas/          # Pydantic request/response schemas
       services/         # research orchestration service
+      agents/           # AI research agents (Company Research Agent)
+      tools/            # external tool integrations (search providers)
+      intelligence/     # evidence collection and validation logic
     tests/              # Pytest unit + integration tests
     alembic/            # Alembic migrations (pgvector-compatible)
     requirements.txt
@@ -56,26 +59,34 @@ ai-competitive-intelligence/
   - `GET /api/v1/research/{research_id}` — status and results.
 - LangGraph `StateGraph` with a typed Pydantic `ResearchState` and `Annotated` list reducers (`competitors`, `evidence`, `errors`, `execution_metadata`).
 - Graph building (`graph/builder.py`) strictly separate from node logic (`graph/nodes/`).
-- Eight deterministic mock nodes in the required order:
-  `initialize_research → research_planner → company_researcher_mock → competitor_discovery_mock → evidence_validator_mock → strategic_analyst_mock → report_generator_mock → finalize_research → END`.
+- Eight nodes in the required order:
+  `initialize_research → research_planner → company_researcher → competitor_discovery_mock → evidence_validator_mock → strategic_analyst_mock → report_generator_mock → finalize_research → END`.
+  (`company_researcher` replaces the Phase 1 mock; `company_researcher_mock` is retained for back-compat and testing.)
 - Execution metadata recorded per node (name, status, timestamps, duration, mock flag).
 - Exception handling: nodes capture failures, record them in `errors`, and the run is never reported as successful when a node fails.
 - Configurable, provider-independent LLM factory (OpenRouter-compatible); **no LLM calls in Phase 1**, lazy initialization (nothing at import time).
 - SQLAlchemy async engine/session; Alembic initialized with a pgvector-compatible initial migration; degrades gracefully without PostgreSQL (never falsely reports a connection).
 - LangGraph PostgreSQL checkpointing (`AsyncPostgresSaver` adapter; dedicated `checkpoints`/`checkpoint_writes` tables separate from business records; thread-based execution and resume).
-- Pytest suite: 40 core tests (fallback mode, no DATABASE_URL) + 15 persistence/checkpoint tests (with DATABASE_URL) = 55 total covering startup, health, validation, research API, state, nodes, full graph, execution order, report generation, failure handling, missing LLM config, DB-unavailable behavior, repository operations, cross-organization isolation, migration correctness, and checkpointing.
+- Pytest suite: 40 core tests (fallback mode, no DATABASE_URL) + 15 persistence/checkpoint tests (with DATABASE_URL) + ~23 Phase 2A tests = ~78 total covering startup, health, validation, research API, state, nodes, full graph, execution order, report generation, failure handling, missing LLM config, DB-unavailable behavior, repository operations, cross-organization isolation, migration correctness, checkpointing, search providers, schemas, evidence, agent behavior, and LangGraph integration.
 - Minimal Next.js dashboard (see Frontend).
 - Documentation: README, `docs/architecture.md`, `docs/agent-design.md`, `docs/development-roadmap.md`.
 
-### Phase 1.5 persistence
+### Phase 2A: Real Company Research Agent
 
-When `DATABASE_URL` is configured (e.g. `postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db`):
+The `company_researcher` node runs `CompanyResearcherAgent`, which:
 
-- Research records are stored in PostgreSQL (`researches` table) via `ResearchRepository`.
-- All queries enforce server-side organization ownership (`organization_id`); records are never exposed across organizations.
-- Alembic migration `0001_initial_research_tables` creates the schema (`alembic upgrade head`).
-- LangGraph checkpoints use dedicated tables (created by `AsyncPostgresSaver.setup()`).
-- Without `DATABASE_URL`, the app runs in fallback mode with an in-memory store and reports the database as unavailable.
+- Generates prioritized search queries across 10 company aspects (overview, HQ, founders, products, business model, target customers, industry, markets, financials, recent developments).
+- Searches via a configurable provider (deterministic mock for offline/tests, or DuckDuckGo HTML for live free-tier search).
+- Fetches source pages with SSRF protection, timeouts, and size limits.
+- Extracts a structured `CompanyProfile` via the LLM (OpenRouter/DeepSeek) with Pydantic schema validation.
+- Collects `Evidence` items with full provenance (source_url, source_title, source_domain, confidence, verification_status).
+- Detects conflicts across sources; confidence is editorial (0–1), not statistical certainty.
+- Persists company profiles and evidence claims to PostgreSQL (`company_profiles`, `evidence_claims` tables), organization-isolated.
+- Degrades gracefully to a search-snippet-based profile (marked unverified) when no LLM is configured.
+
+Database tables (migration `0002_company_profiles`):
+- `company_profiles`: company profiles with organization ownership.
+- `evidence_claims`: evidence items linked to company profiles, with provenance.
 
 ## Backend quick start
 
@@ -152,14 +163,18 @@ The Next.js dashboard lives in `frontend/`. It communicates with the FastAPI bac
 
 ```bash
 cd backend
-# Without DATABASE_URL: 40 core tests (fallback/in-memory mode)
+# Without DATABASE_URL: core tests (fallback/in-memory mode)
 pytest
 
-# With DATABASE_URL: 15 additional persistence/checkpoint/API tests
+# With DATABASE_URL: persistence/checkpoint/API + company persistence tests
 DATABASE_URL=postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db pytest
 ```
 
 All tests use deterministic mock data and make **no external API calls** and consume **no LLM credits**.
+
+Search provider configuration (`.env`):
+- `SEARCH_PROVIDER=mock` (default, no network, no credits) or `duckduckgo` (live free-tier search).
+- `SEARCH_MAX_QUERIES` (default 8), `SEARCH_MAX_PAGES` (default 10), `DUCKDUCKGO_BASE_URL`.
 
 ## Alembic / database
 

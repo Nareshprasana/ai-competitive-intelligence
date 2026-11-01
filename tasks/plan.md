@@ -1,41 +1,44 @@
-# Implementation Plan: ACIS Phase 1.5 — Integration Verification & Database Persistence
+# Implementation Plan: ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A
 
 ## Overview
-Complete Phase 1.5: verify the frontend (install, dev server, production build, end-to-end research), replace the in-memory research store with PostgreSQL-backed persistence via SQLAlchemy repositories + Alembic migrations, add LangGraph PostgreSQL checkpointing, enforce server-side organization ownership, and add tests. Existing 40 Phase-1 tests must remain green; no LLM credits consumed; no Redis/Kafka.
+ACIS backend: FastAPI + LangGraph multi-agent system with persistent PostgreSQL storage and a real AI-powered Company Research Agent (Phase 2A). Frontend: Next.js dashboard. Phase 2A replaces the mock company_researcher with a real agent using search + LLM extraction, evidence with provenance, and PostgreSQL persistence. No LLM credits consumed unless explicitly configured.
 
 ## Architecture Decisions
-- Keep existing API contracts (`POST /api/v1/research`, `GET /api/v1/research/{id}`) compatible.
-- New `repositories/` layer for DB access; service layer switches from in-memory store to repository.
-- Separate `researches` (business records) from LangGraph checkpoints (`checkpoints` table).
-- LangGraph `AsyncPostgresSaver` checkpointing, thread-based execution, resume support.
-- Organization ownership enforced server-side; client-supplied `organization_id` ignored/overridden.
-- Existing `__pycache__`, `.pytest_cache`, alembic `__pycache__` are build artifacts, not source.
+- **company_researcher** replaces **company_researcher_mock** in the LangGraph linear workflow.
+- Real agent uses `CompanyResearcherAgent` with budgeted search, SSRF-safe fetching, LLM structured extraction, evidence provenance, conflict detection, and PostgreSQL persistence.
+- Mock provider is default (no network, no credits); DuckDuckGo available for live free-tier search.
+- LLM client is real OpenRouter HTTP with structured Pydantic output, retry logic, timeout handling — no calls at import time.
+- All repository queries enforce `organization_id` server-side.
 
 ## Task List
-- [ ] Task 1: Repo inspection (complete — read existing modules, git history, tree)
-- [ ] Task 2: Frontend verification (npm install, dev server, production build, e2e research)
-- [ ] Task 3: PostgreSQL integration (models, repositories, Alembic migrations)
-- [ ] Task 4: Replace in-memory storage with PostgreSQL-backed persistence
-- [ ] Task 5: LangGraph PostgreSQL checkpointing (AsyncPostgresSaver, threads, resume)
-- [ ] Task 6: Tests (persistence, restart survival, status updates, txn failures, repo ops, migration, checkpoints, cross-org isolation)
-- [ ] Task 7: Security (server-side org ownership, no trusted client org IDs, unauthorized access tests)
-- [ ] Task 8: Resource efficiency (no Redis/Kafka, no local LLM, no credits, lightweight DB)
-- [ ] Task 9: Git management (commit logically, preserve branch, don't merge to main)
 
-## Checkpoints
-- After Task 2: frontend verifiable (or limitation documented honestly)
-- After Task 4: backend persists research to Postgres, existing 40 tests still green
-- After Task 5: LangGraph checkpointing configured + tested
-- After Task 6: new tests pass; existing 40 green
-- After Task 9: committed on phase-0-1-foundation, not merged to main
+### Phase 0 + 1 + 1.5 (complete)
+- [x] Repo structure, FastAPI app, LangGraph core, 8 mock nodes
+- [x] LLM factory, config, logging, exceptions, DI, CORS, health endpoint
+- [x] SQLAlchemy, Alembic, PostgreSQL persistence, graceful degradation
+- [x] LangGraph checkpointing, 40 core tests, docs, Docker
+
+### Phase 2A (complete)
+- [x] Search provider abstraction + mock + DuckDuckGo providers
+- [x] CompanyProfile/Evidence schemas, Evidence intelligence logic
+- [x] BaseAgent (budget, rate limit, cache, SSRF), CompanyResearcherAgent
+- [x] Real OpenRouter LLM client with structured output
+- [x] Config + requirements (selectolax, search env vars)
+- [x] CompanyProfile/EvidenceClaim ORM models + repositories + migration 0002
+- [x] company_researcher node registered in graph builder
+- [x] ~23 new tests (search, schemas, evidence, agent, LLM, persistence, LangGraph)
+- [x] Existing tests pass in fallback mode; persistence tests pass with DB
+
+### Docs + Git (IN PROGRESS)
+- [ ] Update docs/architecture.md, docs/agent-design.md, docs/development-roadmap.md, README.md
+- [ ] Commit on phase-0-1-foundation, don't merge to main
 
 ## Risks and Mitigations
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| No npm network in env | High | Document honestly; don't claim frontend verification |
-| No PostgreSQL running | High | Tests use sqlite fallback or skip; document requirement |
-| langgraph version checkpointer API | Med | Verify installed langgraph API before coding |
+| No npm network in env | High | Frontend verification documented as limitation, not claimed |
+| pgvector not on Windows PG | High | JSONB used instead; migration pgvector-ready for future |
+| LLM credit spend | High | No calls at import; credits only consumed when API key configured + live provider |
 
 ## Open Questions
-- Whether PostgreSQL is available/running in this environment.
-- Whether npm registry is reachable from this environment.
+- None blocking.

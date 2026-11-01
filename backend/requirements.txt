@@ -22,6 +22,9 @@ psycopg_pool==3.3.3
 # LangGraph PostgreSQL checkpointing
 langgraph-checkpoint-postgres==3.2.0
 
+# Search and HTML parsing (Company Research Agent)
+selectolax==1.0.2
+
 # HTTP client for tests and internal service calls
 httpx==0.28.1
 
