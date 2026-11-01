@@ -1,7 +1,7 @@
 """Tests for LangGraph PostgreSQL checkpointing (core/checkpoint.py).
 
-Requires DATABASE_URL to point at a live PostgreSQL instance. Verifies that
-the AsyncPostgresSaver adapter can set up checkpoints tables, store a
+Requires ACIS_TEST_DATABASE_URL to point at a dedicated PostgreSQL database.
+Verifies that the AsyncPostgresSaver adapter can set up checkpoints tables, store a
 thread-based checkpoint, and retrieve it (resume capability).
 """
 
@@ -36,10 +36,10 @@ db._session_factory = None
 db._available = False
 db._checkpointer = None
 
-TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
+TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or ""
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
-    reason="PostgreSQL tests require ACIS_TEST_DATABASE_URL or DATABASE_URL.",
+    reason="PostgreSQL tests require a dedicated ACIS_TEST_DATABASE_URL.",
 )
 # libpq form for psycopg-based checkpointer.
 CHECKPOINT_CONN_STRING = TEST_DATABASE_URL.replace(

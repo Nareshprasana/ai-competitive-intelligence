@@ -1,9 +1,4 @@
-"""Integration tests for PostgreSQL-backed research API.
-
-Requires DATABASE_URL to point at a live PostgreSQL instance. Creates a fresh
-FastAPI app with the database configured so research records persist across
-requests (survive a simulated backend restart).
-"""
+"""Integration tests for PostgreSQL-backed research API."""
 
 import asyncio
 import os
@@ -11,10 +6,10 @@ import os
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-# Ensure the database is configured before creating the app.
-os.environ.setdefault(
-    "DATABASE_URL",
-    "postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db",
+TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or ""
+pytestmark = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="PostgreSQL tests require a dedicated ACIS_TEST_DATABASE_URL.",
 )
 
 

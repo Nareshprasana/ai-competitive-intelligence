@@ -1,10 +1,12 @@
 """Tests for the base agent class (budgeting, rate limiting, SSRF, fetching)."""
 
 import asyncio
+import socket
 
 import httpx
 import pytest
 
+import app.agents.base as agent_base
 from app.agents.base import (
     AgentBudget,
     BaseAgent,
@@ -128,6 +130,96 @@ async def test_fetch_page_blocks_private_url():
     async with httpx.AsyncClient() as client:
         result = await fetch_page("http://localhost/admin", client=client)
         assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_pins_dns_result_and_preserves_tls_hostname(monkeypatch):
+    dns_calls = []
+    requests = []
+
+    def resolve(host, port, *, type):
+        dns_calls.append((host, port))
+        address = "93.184.216.34" if len(dns_calls) == 1 else "127.0.0.1"
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))
+        ]
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, text="safe response")
+
+    monkeypatch.setattr(agent_base.socket, "getaddrinfo", resolve)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await fetch_page("https://example.com/resource", client=client)
+
+    assert result == "safe response"
+    assert len(dns_calls) == 1
+    assert str(requests[0].url) == "https://93.184.216.34/resource"
+    assert requests[0].headers["host"] == "example.com"
+    assert requests[0].extensions["sni_hostname"] == b"example.com"
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_does_not_use_ip_literal_as_tls_sni():
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, text="safe response")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await fetch_page("https://93.184.216.34/resource", client=client)
+
+    assert result == "safe response"
+    assert requests[0].extensions.get("sni_hostname") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_rejects_mixed_public_and_private_dns_answers(monkeypatch):
+    requests = []
+
+    def resolve(host, port, *, type):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.7", port)),
+        ]
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, text="must not be requested")
+
+    monkeypatch.setattr(agent_base.socket, "getaddrinfo", resolve)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await fetch_page("https://example.com/resource", client=client)
+
+    assert result is None
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_revalidates_redirect_destination_dns(monkeypatch):
+    dns_hosts = []
+    requests = []
+
+    def resolve(host, port, *, type):
+        dns_hosts.append(host)
+        address = "93.184.216.34" if host == "example.com" else "169.254.169.254"
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))
+        ]
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "http://metadata.example/latest"})
+
+    monkeypatch.setattr(agent_base.socket, "getaddrinfo", resolve)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await fetch_page("https://example.com/resource", client=client)
+
+    assert result is None
+    assert dns_hosts == ["example.com", "metadata.example"]
+    assert len(requests) == 1
+    assert requests[0].headers["host"] == "example.com"
 
 
 __all__ = []

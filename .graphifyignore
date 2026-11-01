@@ -1,0 +1,3 @@
+# Keep user-maintained task plans out of the committed architecture graph.
+tasks/plan.md
+tasks/todo.md

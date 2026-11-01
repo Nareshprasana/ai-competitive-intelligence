@@ -2,7 +2,7 @@
 
 A production-oriented AI Competitive Intelligence system built with **LangGraph**, **FastAPI**, **PostgreSQL + pgvector**, and **Next.js**. Phase 0 + Phase 1 deliver a functioning multi-agent backend with deterministic mock agents (no LLM credits consumed). Phase 1.5 adds persistent research storage (PostgreSQL + SQLAlchemy repositories + Alembic migrations) and LangGraph PostgreSQL checkpointing. Phase 2A replaces the mock company researcher with a real AI-powered Company Research Agent that investigates real companies via search + LLM extraction, attaches evidence with provenance, and persists to PostgreSQL. A minimal Next.js dashboard talks to the real backend.
 
-> **Status:** Phase 0 + Phase 1 + Phase 1.5 + Phase 2A complete (backend fully tested: ~78 tests; frontend code complete — see "Frontend" below for a verification limitation).
+> **Status:** Phases 0, 1, 1.5, 2A, and 2B are implemented. Phase 2C adds the codebase knowledge workflow, SSRF DNS-rebinding hardening, and isolated PostgreSQL test safeguards. Frontend verification remains limited; see "Frontend" below.
 
 ## Repository structure
 
@@ -60,7 +60,7 @@ ai-competitive-intelligence/
 - LangGraph `StateGraph` with a typed Pydantic `ResearchState` and `Annotated` list reducers (`competitors`, `evidence`, `errors`, `execution_metadata`).
 - Graph building (`graph/builder.py`) strictly separate from node logic (`graph/nodes/`).
 - Eight nodes in the required order:
-  `initialize_research → research_planner → company_researcher → competitor_discovery_mock → evidence_validator_mock → strategic_analyst_mock → report_generator_mock → finalize_research → END`.
+  `initialize_research → research_planner → company_researcher → competitor_discovery → evidence_validator_mock → strategic_analyst_mock → report_generator_mock → finalize_research → END`.
   (`company_researcher` replaces the Phase 1 mock; `company_researcher_mock` is retained for back-compat and testing.)
 - Execution metadata recorded per node (name, status, timestamps, duration, mock flag).
 - Exception handling: nodes capture failures, record them in `errors`, and the run is never reported as successful when a node fails.
@@ -159,22 +159,39 @@ The Next.js dashboard lives in `frontend/`. It communicates with the FastAPI bac
 | `npm run start` | Start production server |
 | `npm run lint` | ESLint |
 
-## Testing (backend)
+## Developer workflow: Graphify + Ponytail
 
-```bash
-cd backend
-# Without DATABASE_URL: core tests (fallback/in-memory mode)
-pytest
+Project-level Copilot guidance in [.github/copilot-instructions.md](./.github/copilot-instructions.md) combines Graphify architecture queries with Ponytail's minimal-change principles. Graphify is installed as an isolated CLI (`uv tool install graphifyy`), not an ACIS runtime dependency. Query the graph before tracing existing code, then verify important relationships in source and tests:
 
-# With DATABASE_URL: persistence/checkpoint/API + company persistence tests
-DATABASE_URL=postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db pytest
+```powershell
+graphify query "How does research submission reach LangGraph execution?"
+graphify path "run_research()" "ResearchRepository"
+graphify explain "CompetitorResearcherAgent"
+graphify update .
 ```
 
-All tests use deterministic mock data and make **no external API calls** and consume **no LLM credits**.
+Tracked outputs are in `graphify-out/`: `graph.json`, `GRAPH_REPORT.md`, and `graph.html`. The graph includes code and selected architecture Markdown documents; it excludes secrets/environment files, dependencies, caches, build output, database/user data, and the user-maintained task plans listed in `.graphifyignore`. Graphify can infer relationships and omit unsupported files; it is a navigation aid, not a substitute for source inspection. Detailed install, query, refresh, scope, and verification notes are in [docs/development-roadmap.md](./docs/development-roadmap.md).
 
-Search provider configuration (`.env`):
-- `SEARCH_PROVIDER=mock` (default, no network, no credits) or `duckduckgo` (live free-tier search).
-- `SEARCH_MAX_QUERIES` (default 8), `SEARCH_MAX_PAGES` (default 10), `DUCKDUCKGO_BASE_URL`.
+## Testing (backend)
+
+```powershell
+cd backend
+# Core/unit tests run offline; PostgreSQL-backed tests skip unless explicitly configured.
+python -m pytest
+
+# Optional persistence/checkpoint tests: use a separately created acis_test database.
+$env:ACIS_TEST_DATABASE_URL = "postgresql+asyncpg://<user>:<password>@localhost:5432/acis_test"
+$env:DATABASE_URL = $env:ACIS_TEST_DATABASE_URL
+alembic upgrade head
+python -m pytest -q tests/unit/test_persistence.py tests/unit/test_checkpoint.py `
+  tests/unit/test_competitor_persistence.py tests/integration/test_persistence_company.py `
+  tests/integration/test_persistence_api.py
+```
+
+The test harness rejects non-PostgreSQL URLs and database names without a delimited `test` component. It ignores `.env`/`DATABASE_URL` when no `ACIS_TEST_DATABASE_URL` is set and overrides `DATABASE_URL` with the dedicated test URL when it is set. Never use a development or production database for these tests. Do not commit credentials.
+
+All tests use deterministic mock data and make **no external API calls** or consume **no LLM credits**.
+Search provider configuration (`.env`): `SEARCH_PROVIDER=mock` (default, offline) or `duckduckgo` (live); `SEARCH_MAX_QUERIES` (default 8), `SEARCH_MAX_PAGES` (default 10), and `DUCKDUCKGO_BASE_URL`.
 
 ## Alembic / database
 

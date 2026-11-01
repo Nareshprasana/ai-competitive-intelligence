@@ -1,9 +1,4 @@
-"""Tests for PostgreSQL-backed research persistence (repository layer).
-
-Requires DATABASE_URL to point at a live PostgreSQL instance
-(the acis_db database configured for this phase). Tests run against the real
-database; each test rolls back its own transaction so rows don't accumulate.
-"""
+"""Tests for PostgreSQL-backed research persistence (repository layer)."""
 
 import asyncio
 import os
@@ -24,9 +19,10 @@ db._session_factory = None
 db._available = False
 db._checkpointer = None
 
-TEST_DATABASE_URL = os.getenv(
-    "ACIS_TEST_DATABASE_URL",
-    "postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_db",
+TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or ""
+pytestmark = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="PostgreSQL tests require a dedicated ACIS_TEST_DATABASE_URL.",
 )
 
 

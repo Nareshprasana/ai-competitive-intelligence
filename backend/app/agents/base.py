@@ -10,7 +10,7 @@ import ipaddress
 import socket
 import time
 from typing import Any, Callable, Dict, List, Optional, TypeVar
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -94,21 +94,37 @@ def validate_url_for_fetch(url: str) -> bool:
         return False
 
 
-async def _host_resolves_publicly(host: str) -> bool:
-    """Reject hostnames with any non-public DNS answer before making a request."""
+async def _resolve_public_addresses(host: str, port: int) -> List[str]:
+    """Resolve a host once and return only addresses safe to pin for the request."""
     try:
-        addresses = await asyncio.to_thread(
-            socket.getaddrinfo, host, None, type=socket.SOCK_STREAM
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+
+    if address is not None:
+        if address.is_global and not getattr(address, "scope_id", None):
+            return [address.compressed]
+        return []
+
+    try:
+        records = await asyncio.to_thread(
+            socket.getaddrinfo, host, port, type=socket.SOCK_STREAM
         )
     except OSError:
-        return False
-    resolved = set()
-    try:
-        for address in addresses:
-            resolved.add(ipaddress.ip_address(address[4][0]))
-    except (ValueError, IndexError):
-        return False
-    return bool(resolved) and all(address.is_global for address in resolved)
+        return []
+
+    resolved: List[str] = []
+    for record in records:
+        try:
+            address = ipaddress.ip_address(record[4][0])
+        except (ValueError, IndexError, TypeError):
+            return []
+        if not address.is_global or getattr(address, "scope_id", None):
+            return []
+        normalized = address.compressed
+        if normalized not in resolved:
+            resolved.append(normalized)
+    return resolved
 
 
 async def fetch_page(
@@ -129,16 +145,54 @@ async def fetch_page(
 
     current_url = url
     for _ in range(6):
+        if not validate_url_for_fetch(current_url):
+            logger.warning("Blocked fetch of non-public URL: %s", current_url)
+            return None
+
         parsed = urlsplit(current_url)
-        if not await _host_resolves_publicly(parsed.hostname or ""):
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = await _resolve_public_addresses(host, port)
+        if not addresses:
             logger.warning("Blocked fetch for host resolving to a non-public address.")
             return None
+
+        address = ipaddress.ip_address(addresses[0])
+        pinned_host = (
+            "[%s]" % address.compressed
+            if address.version == 6
+            else address.compressed
+        )
+        pinned_netloc = pinned_host
+        if parsed.port is not None:
+            pinned_netloc += ":%d" % parsed.port
+        pinned_url = urlunsplit(
+            (parsed.scheme, pinned_netloc, parsed.path or "/", parsed.query, "")
+        )
+
+        host_header = host.encode("idna").decode("ascii")
+        if ":" in host_header:
+            host_header = "[%s]" % host_header
+        if parsed.port is not None:
+            host_header += ":%d" % parsed.port
+        try:
+            ipaddress.ip_address(host)
+            sni_hostname = None
+        except ValueError:
+            sni_hostname = host.encode("idna")
+        extensions = (
+            {"sni_hostname": sni_hostname}
+            if parsed.scheme == "https" and sni_hostname is not None
+            else None
+        )
         try:
             async with client.stream(
                 "GET",
-                current_url,
+                pinned_url,
+                headers={"Host": host_header},
                 timeout=timeout_seconds,
                 follow_redirects=False,
+                extensions=extensions,
             ) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")

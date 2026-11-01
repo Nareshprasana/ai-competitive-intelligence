@@ -49,7 +49,7 @@ GET /api/v1/research/{research_id}
 | `app/core/database.py` | SQLAlchemy async engine/session; graceful degradation without PG; LangGraph checkpointer factory |
 | `app/core/checkpoint.py` | Async-compatible PostgreSQL checkpointer adapter for LangGraph |
 | `app/core/llm.py` | Provider-independent LLM factory (OpenRouter-compatible), lazy; real HTTP client with structured Pydantic output |
-| `app/agents/base.py` | Base agent: search budgeting, rate limiting, result caching, SSRF-safe URL validation, HTTP fetch with size limits/timeouts |
+| `app/agents/base.py` | Base agent: search budgeting, rate limiting, result caching, DNS-pinned SSRF-safe URL validation, HTTP fetch with size limits/timeouts |
 | `app/agents/company_researcher.py` | Company Research Agent: query generation → search → retrieval → LLM extraction → evidence → validation → profile |
 | `app/agents/competitor_researcher.py` | Competitor discovery: shared research results → bounded search → extraction → source validation → overlap scoring |
 | `app/tools/search/base.py` | Abstract `SearchProvider` interface |
@@ -115,6 +115,8 @@ Without `DATABASE_URL`, the application starts normally. The SQLAlchemy engine i
 - Request-size limit (default 4 MB).
 - Safe error messages to clients; internal details not leaked.
 - `organization_id` ownership modeled and enforced server-side for tenant isolation.
+- Page fetching resolves DNS once per request, rejects the request if any returned address is non-public, and connects to a vetted IP literal while preserving the original HTTP Host header and HTTPS SNI/certificate hostname. Redirects are followed manually and each destination is resolved and checked again. This closes the DNS-rebinding gap between a separate preflight lookup and HTTP client's connection-time lookup.
+- DNS pinning is implemented at the HTTP request layer; it relies on the configured HTTPX client/httpcore honoring the pinned literal URL and TLS `sni_hostname` extension. Changes to custom transports or proxy configuration require renewed SSRF validation.
 
 ## Company Research Agent pipeline (Phase 2A)
 
@@ -182,7 +184,7 @@ Key behaviors:
 - **Budgeting**: configurable `max_search_queries`, `max_pages_fetched`, `max_llm_calls`, `max_retries`, `max_tokens_per_llm_call`.
 - **Caching**: search results cached within a research run to avoid duplicate searches.
 - **Rate limiting**: minimum interval between search requests.
-- **SSRF protection**: private/internal addresses (localhost, 10.x, 172.16-31.x, 192.168.x, 169.254.x) are blocked.
+- **SSRF protection**: page fetches reject non-public DNS answers, connect to a vetted IP literal while preserving the original Host/SNI, and manually validate each redirect destination. This prevents DNS rebinding between hostname validation and connection. See the HTTPX transport/proxy limitation below.
 - **No fabricated citations**: unavailable information is `None`/empty, never invented.
 - **Confidence is editorial**: not statistical certainty; ranges 0–1.
 - **Verification status**: `verified`, `partially_verified`, `conflicting`, `unverified`.

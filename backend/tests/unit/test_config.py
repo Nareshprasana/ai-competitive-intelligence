@@ -16,7 +16,7 @@ def test_settings_not_configured_by_default():
     assert s.is_llm_configured is False
     assert s.is_database_configured is False
     assert s.openrouter_api_key is None
-    assert s.database_url is None
+    assert not s.database_url
 
 
 def test_cors_origin_string_parsing():

@@ -5,15 +5,14 @@ OpenRouter-compatible config, and a clear error when invoked without an API key
 (so no LLM credits can be consumed accidentally in Phase 1).
 """
 
-import app.core.llm as llm_module
-from app.core.llm import LLMConfig, LLMFactory, OpenRouterLLMClient, llm_factory
+from app.core.llm import LLMConfig, LLMFactory, OpenRouterLLMClient
 from app.core.exceptions import LLMConfigurationError
 
 
-def test_llm_factory_no_init_at_import():
-    # The factory and client are not created at import time.
-    assert llm_module.llm_factory._client is None
-    assert llm_module.llm_factory._config is None
+def test_llm_factory_is_lazy_until_client_requested():
+    factory = LLMFactory()
+    assert factory._client is None
+    assert factory._config is None
 
 
 def test_llm_config_from_env_without_key_not_configured():
