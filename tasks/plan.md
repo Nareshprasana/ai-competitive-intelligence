@@ -1,44 +1,86 @@
-# Implementation Plan: ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A
+# Implementation Plan: ACIS Phase 2B — Competitor Discovery Agent
 
 ## Overview
-ACIS backend: FastAPI + LangGraph multi-agent system with persistent PostgreSQL storage and a real AI-powered Company Research Agent (Phase 2A). Frontend: Next.js dashboard. Phase 2A replaces the mock company_researcher with a real agent using search + LLM extraction, evidence with provenance, and PostgreSQL persistence. No LLM credits consumed unless explicitly configured.
+Replace the deterministic mock `competitor_discovery_mock` node with a real Competitor Discovery Agent that identifies and validates direct, indirect, emerging, and substitute competitors for a researched company. The agent reuses existing search, LLM, evidence, and persistence infrastructure. No new dependencies required.
 
-## Architecture Decisions
-- **company_researcher** replaces **company_researcher_mock** in the LangGraph linear workflow.
-- Real agent uses `CompanyResearcherAgent` with budgeted search, SSRF-safe fetching, LLM structured extraction, evidence provenance, conflict detection, and PostgreSQL persistence.
-- Mock provider is default (no network, no credits); DuckDuckGo available for live free-tier search.
-- LLM client is real OpenRouter HTTP with structured Pydantic output, retry logic, timeout handling — no calls at import time.
-- All repository queries enforce `organization_id` server-side.
+## Architecture
 
-## Task List
+```
+Company Profile (from company_researcher)
+    ↓
+Product and Service Analysis
+    ↓
+Market and Customer Analysis
+    ↓
+Competitor Search Query Generation
+    ↓
+External Search (reuse SearchProvider: mock default / DuckDuckGo)
+    ↓
+Candidate Company Extraction (LLM structured extraction)
+    ↓
+Duplicate Removal (by name/domain)
+    ↓
+Competitor Qualification (transparent scoring model)
+    ↓
+Evidence Validation (reuse evidence infrastructure)
+    ↓
+Competitor Ranking
+    ↓
+Structured Results (CompetitorProfile[])
+    ↓
+PostgreSQL Persistence (Competitor + CompetitorEvidence tables)
+```
 
-### Phase 0 + 1 + 1.5 (complete)
-- [x] Repo structure, FastAPI app, LangGraph core, 8 mock nodes
-- [x] LLM factory, config, logging, exceptions, DI, CORS, health endpoint
-- [x] SQLAlchemy, Alembic, PostgreSQL persistence, graceful degradation
-- [x] LangGraph checkpointing, 40 core tests, docs, Docker
+## New Modules
 
-### Phase 2A (complete)
-- [x] Search provider abstraction + mock + DuckDuckGo providers
-- [x] CompanyProfile/Evidence schemas, Evidence intelligence logic
-- [x] BaseAgent (budget, rate limit, cache, SSRF), CompanyResearcherAgent
-- [x] Real OpenRouter LLM client with structured output
-- [x] Config + requirements (selectolax, search env vars)
-- [x] CompanyProfile/EvidenceClaim ORM models + repositories + migration 0002
-- [x] company_researcher node registered in graph builder
-- [x] ~23 new tests (search, schemas, evidence, agent, LLM, persistence, LangGraph)
-- [x] Existing tests pass in fallback mode; persistence tests pass with DB
+| Module | Purpose |
+|--------|---------|
+| `app/schemas/competitor.py` | `CompetitorProfile`, `CompetitorType`, `QualificationFactor`, `CompetitorCollection` |
+| `app/intelligence/competitor.py` | Qualification scoring, deduplication, overlap analysis |
+| `app/agents/competitor_researcher.py` | `CompetitorResearcherAgent` (extends `BaseAgent`) |
+| `app/models/competitor.py` | `Competitor`, `CompetitorEvidence` ORM models |
+| `app/repositories/competitor.py` | `CompetitorRepository` with org isolation |
+| `alembic/versions/0003_competitors.py` | Migration |
+| `app/graph/nodes/competitor_discovery.py` | Graph node replacing `competitor_discovery_mock` |
 
-### Docs + Git (IN PROGRESS)
-- [ ] Update docs/architecture.md, docs/agent-design.md, docs/development-roadmap.md, README.md
-- [ ] Commit on phase-0-1-foundation, don't merge to main
+## Modified Modules
 
-## Risks and Mitigations
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| No npm network in env | High | Frontend verification documented as limitation, not claimed |
-| pgvector not on Windows PG | High | JSONB used instead; migration pgvector-ready for future |
-| LLM credit spend | High | No calls at import; credits only consumed when API key configured + live provider |
+| Module | Change |
+|--------|--------|
+| `app/graph/builder.py` | Register `competitor_discovery` in `NODE_ORDER`/`_NODES` |
+| `app/graph/nodes/__init__.py` | Export `competitor_discovery`, keep `competitor_discovery_mock` |
+| `app/core/config.py` | Add competitor search settings |
+| `backend/.env.example` | Add competitor env vars |
+| `docs/architecture.md`, `docs/agent-design.md`, `docs/development-roadmap.md`, `README.md` | Update docs |
 
-## Open Questions
-- None blocking.
+## Design Decisions
+
+- **Four competitor types**: `direct`, `indirect`, `emerging`, `substitute` — every competitor has a documented `competitor_type`
+- **Transparent qualification scoring**: weighted sum of evidence-backed factors (product similarity, customer overlap, problem-space overlap, geographic overlap, business-model similarity). No unexplained LLM score.
+- **Separation**: evidence-backed observations vs analytical judgments vs unknown information
+- **Duplicate removal**: by normalized company name and domain
+- **Resource reuse**: reuses company research search results, caches queries, budgeted search/LLM calls
+- **Organization isolation**: all repository queries filter by `organization_id`
+- **No uncontrolled loops**: linear discovery flow, bounded candidates
+- **Graceful degradation**: without LLM, uses heuristic qualification from search snippets
+
+## Test Plan
+
+- Unit: schemas, qualification scoring, deduplication, agent (mocked LLM/search), persistence, org isolation
+- Integration: LangGraph node execution, checkpoint recovery, failure handling
+- All tests use deterministic fixtures; no real search APIs or LLM credits
+
+## Acceptance Criteria
+
+1. Competitor Discovery Agent implemented ✅
+2. Four competitor categories supported ✅
+3. Candidate qualification is explainable ✅
+4. Evidence attached to claims ✅
+5. Competitors persist in PostgreSQL ✅
+6. Organization isolation enforced ✅
+7. Mock node replaced in LangGraph ✅
+8. Existing functionality preserved ✅
+9. Existing tests pass ✅
+10. New tests pass ✅
+11. Documentation updated ✅
+12. No secrets committed ✅
