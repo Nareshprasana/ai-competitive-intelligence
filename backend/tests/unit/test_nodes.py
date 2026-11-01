@@ -1,0 +1,109 @@
+"""Tests for individual graph nodes (graph/nodes/).
+
+Nodes return partial state dicts (the LangGraph update pattern). Each test
+merges the update back into a base ResearchState to inspect results.
+"""
+
+import asyncio
+
+from app.graph.nodes import (
+    initialize_research,
+    research_planner,
+    company_researcher_mock,
+    competitor_discovery_mock,
+    evidence_validator_mock,
+    strategic_analyst_mock,
+    report_generator_mock,
+    finalize_research,
+)
+from app.graph.state import ResearchState
+
+
+def _base_state(**overrides):
+    data = dict(
+        research_id="res-1",
+        organization_id="org-dev",
+        company_name="Acme Corp",
+        industry="AI Software",
+        research_question="Pricing vs competitors?",
+    )
+    data.update(overrides)
+    return ResearchState(**data)
+
+
+def _run(node_fn, state):
+    result = asyncio.run(node_fn(state))
+    if isinstance(result, dict):
+        merged = {**state.model_dump(), **result}
+        return ResearchState(**merged)
+    return result
+
+
+def test_initialize_research():
+    state = _run(initialize_research, _base_state())
+    assert state.research_id == "res-1"
+    assert state.review_status == "started"
+    md = state.execution_metadata[0]
+    assert md["node_name"] == "initialize_research"
+    assert md["status"] == "completed"
+    assert state.errors == []
+
+
+def test_research_planner():
+    state = _run(research_planner, _base_state())
+    assert state.research_plan is not None
+    assert state.research_plan["company_name"] == "Acme Corp"
+    assert len(state.research_plan["steps"]) == 8
+
+
+def test_company_researcher_mock():
+    state = _run(company_researcher_mock, _base_state())
+    assert state.company_profile is not None
+    assert state.company_profile["company_name"] == "Acme Corp"
+    assert state.company_profile["mock"] is True
+
+
+def test_competitor_discovery_mock():
+    state = _run(competitor_discovery_mock, _base_state())
+    assert len(state.competitors) == 3
+    assert all(c["industry"] == "AI Software" for c in state.competitors)
+
+
+def test_evidence_validator_mock():
+    state = _run(evidence_validator_mock, _base_state())
+    assert len(state.evidence) == 2
+    assert state.validation_results is not None
+    assert state.validation_results["status"] == "validated_mock"
+
+
+def test_strategic_analyst_mock():
+    state = _base_state()
+    # Pre-populate competitors as competitor_discovery_mock would have done.
+    state.competitors = [
+        {"competitor_id": "comp-1", "name": "Competitor A", "industry": state.industry}
+    ]
+    state = _run(strategic_analyst_mock, state)
+    assert state.strategic_analysis is not None
+    assert len(state.strategic_analysis["opportunities"]) >= 1
+    assert len(state.strategic_analysis["threats"]) >= 1
+
+
+def test_report_generator_mock():
+    state = _run(report_generator_mock, _base_state())
+    assert state.final_report is not None
+    assert state.final_report["company"] == "Acme Corp"
+    assert state.final_report["mock"] is True
+
+
+def test_finalize_research_success_no_errors():
+    state = _run(finalize_research, _base_state())
+    assert state.review_status == "reviewed"
+
+
+def test_nodes_record_execution_metadata():
+    state = _run(company_researcher_mock, _base_state())
+    md = state.execution_metadata[0]
+    assert md["status"] == "completed"
+    assert md["mock"] is True
+    assert "duration_ms" in md
+    assert md["node_name"] == "company_researcher_mock"

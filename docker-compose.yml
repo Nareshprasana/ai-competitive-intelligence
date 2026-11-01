@@ -1,0 +1,49 @@
+# ACIS infrastructure (Docker Compose)
+#
+# Phase 1 runs the backend in mock-agent mode: no PostgreSQL and no LLM
+# credentials are required. Uncomment the postgres service (and set
+# DATABASE_URL in backend/.env) when you provision a database.
+#
+#   docker compose up --build
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      - APP_ENV=production
+      - DEBUG=false
+    restart: unless-stopped
+    # healthcheck: curl -f http://localhost:8000/api/v1/health || exit 1
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - frontend/.env
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # postgres:
+  #   image: ankane/pgvector:latest
+  #   ports:
+  #     - "5432:5432"
+  #   env_file:
+  #     - backend/.env
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+# volumes:
+#   pgdata:

@@ -1,0 +1,25 @@
+# ACIS backend dependencies (Phase 0 + Phase 1)
+# Kept minimal per resource-efficiency requirements. No LLM calls in Phase 1.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+pydantic-settings==2.10.1
+python-dotenv==1.0.1
+
+# LangGraph / LangChain core (provider-independent LLM abstraction)
+langgraph==1.2.11
+langchain-core==1.6.3
+
+# Database: SQLAlchemy 2.0 async, Alembic migrations, pgvector support
+sqlalchemy[asyncio]==2.0.52
+alembic==1.19.1
+pgvector==0.3.2
+asyncpg==0.29.0
+
+# HTTP client for tests and internal service calls
+httpx==0.28.1
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==0.26.0

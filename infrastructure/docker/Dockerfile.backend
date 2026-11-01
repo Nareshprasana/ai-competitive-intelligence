@@ -1,0 +1,21 @@
+# ACIS backend Docker image (Phase 0 + Phase 1)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Install runtime dependencies.
+COPY backend/requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Copy application code.
+COPY backend/ . .
+
+# The app runs without DATABASE_URL (mock-agent mode). Set DATABASE_URL and
+# OPENROUTER_API_KEY when PostgreSQL / live LLM access are provisioned.
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
