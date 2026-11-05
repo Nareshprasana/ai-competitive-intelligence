@@ -2,6 +2,8 @@
 
 All v1 endpoints are mounted here and included in the FastAPI app under
 ``settings.api_v1_str`` (default ``/api/v1``).
+Mount new business endpoints under ``authenticated_router``; only explicitly
+public health and authentication routes belong directly on ``api_router``.
 """
 
 from fastapi import APIRouter, Depends

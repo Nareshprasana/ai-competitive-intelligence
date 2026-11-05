@@ -1,7 +1,7 @@
 # Graph Report - ai-competitive-intelligence  (2026-11-05)
 
 ## Corpus Check
-- 122 files · ~45,025 words
+- 122 files · ~45,042 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 10 file(s) not represented in the graph (top: (none) 3, .ini 2, .example 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `baa76676`
+- Built from commit: `cb41ad06`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -309,7 +309,7 @@ Nodes (3): get_db_session(), database_health(), get_session()
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `get_settings()` connect `get_settings` to `crypto.py`, `research_service.py`, `test_persistence_company.py`, `database.py`, `ResearchError`, `competitor_discovery_node.py`, `typing`, `llm.py`, `test_checkpoint.py`, `agents/company_researcher.py`, `config.py`, `nodes/company_researcher.py`, `test_api.py`, `endpoints/auth.py`, `DuckDuckGoProvider`, `test_company_researcher_agent.py`, `DatabaseManager`, `test_persistence_api.py`, `get_url`, `identity.py`, `security/auth.py`?**
-  _High betweenness centrality (0.137) - this node is a cross-community bridge._
+  _High betweenness centrality (0.141) - this node is a cross-community bridge._
 - **Are the 32 inferred relationships involving `ResearchState` (e.g. with `build_graph()` and `run_node()`) actually correct?**
   _`ResearchState` has 32 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `react-dom`, `tailwindcss`, `postcss` to the rest of the system?**
@@ -317,7 +317,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `endpoints/research.py` be split into smaller, more focused modules?**
   _Cohesion score 0.12987012987012986 - nodes in this community are weakly interconnected._
 - **Why does `ResearchState` connect `ResearchState` to `strategic_analyst_mock.py`, `competitor_researcher.py`, `test_graph.py`, `test_nodes.py`, `research_service.py`, `AI Competitive Intelligence System (ACIS)`, `builder.py`, `competitor_discovery_node.py`, `test_checkpoint.py`, `security/auth.py`, `test_competitor_discovery_node.py`, `nodes/company_researcher.py`, `run_node`?**
-  _High betweenness centrality (0.068) - this node is a cross-community bridge._
+  _High betweenness centrality (0.067) - this node is a cross-community bridge._
 - **Are the 13 inferred relationships involving `SearchResult` (e.g. with `BaseAgent` and `SearchResultCache`) actually correct?**
   _`SearchResult` has 13 INFERRED edges - model-reasoned connections that need verification._
 - **Should `crypto.py` be split into smaller, more focused modules?**
