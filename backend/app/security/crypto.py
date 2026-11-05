@@ -85,10 +85,12 @@ def decrypt_bytes(value: str, *, associated_data: bytes) -> bytes:
     key = keys.get(key_id)
     if key is None:
         raise EncryptionConfigurationError(
-            f"Encryption key ID {key_id!r} is not available in the configured keyring."
+            "A key required to decrypt stored data is unavailable."
         )
     try:
-        packed = base64.urlsafe_b64decode(payload.encode("ascii"))
+        packed = base64.b64decode(
+            payload.encode("ascii"), altchars=b"-_", validate=True
+        )
         nonce, ciphertext = packed[:12], packed[12:]
         if len(nonce) != 12 or not ciphertext:
             raise ValueError("Invalid encrypted data payload.")
@@ -171,15 +173,19 @@ class EncryptedCheckpointSerializer:
 
     def loads_typed(self, data: tuple[str, bytes]) -> Any:
         value_type, payload = data
-        if not value_type.startswith(_CHECKPOINT_PREFIX):
-            return self._inner.loads_typed(data)
+        if not isinstance(value_type, str) or not value_type.startswith(
+            _CHECKPOINT_PREFIX
+        ):
+            raise ValueError("Checkpoint payload is not encrypted.")
         try:
             _, key_id, inner_type = value_type.split(":", 2)
-        except ValueError as exc:
+        except (AttributeError, ValueError) as exc:
             raise ValueError("Invalid encrypted checkpoint type.") from exc
-        envelope = (
-            f"{_ENVELOPE_PREFIX}{key_id}:{payload.decode('ascii')}"
-        )
+        try:
+            encoded_payload = payload.decode("ascii")
+        except (AttributeError, UnicodeDecodeError) as exc:
+            raise ValueError("Invalid encrypted checkpoint payload.") from exc
+        envelope = f"{_ENVELOPE_PREFIX}{key_id}:{encoded_payload}"
         decrypted = decrypt_bytes(
             envelope,
             associated_data=f"langgraph-checkpoint:{inner_type}".encode(),

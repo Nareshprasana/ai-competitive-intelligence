@@ -27,6 +27,7 @@ from app.security.auth import (
     email_lookup_hash,
     hash_password,
     require_permission,
+    require_platform_admin,
     verify_csrf,
     verify_password,
 )
@@ -57,6 +58,7 @@ def test_argon2id_password_hashing_and_password_bounds():
     assert not verify_password(encoded, "not-the-password")
     with pytest.raises(ValueError):
         hash_password("short")
+    assert not verify_password("$argon2id$malformed", "password")
 
 
 def test_access_token_validates_and_rejects_tampering(monkeypatch):
@@ -67,6 +69,14 @@ def test_access_token_validates_and_rejects_tampering(monkeypatch):
     assert claims["sid"] == "session-1"
     with pytest.raises(HTTPException) as error:
         decode_access_token(token + "tampered")
+    assert error.value.status_code == 401
+
+
+@pytest.mark.parametrize("token", ["", "not-a-jwt", "a.b.c", "eyJhbGciOiJub25lIn0.e30."])
+def test_malformed_access_tokens_are_rejected(monkeypatch, token):
+    monkeypatch.setattr("app.security.auth.get_settings", _settings)
+    with pytest.raises(HTTPException) as error:
+        decode_access_token(token)
     assert error.value.status_code == 401
 
 
@@ -113,6 +123,48 @@ def test_role_permissions_are_enforced():
     assert asyncio.run(dependency(analyst)) == analyst
     with pytest.raises(HTTPException) as error:
         asyncio.run(dependency(viewer))
+    assert error.value.status_code == 403
+
+
+def test_role_permission_matrix_and_platform_admin_boundary():
+    expected = {
+        Role.OWNER: set(Permission),
+        Role.ADMIN: set(Permission)
+        - {Permission.MANAGE_ORGANIZATION, Permission.MANAGE_CONFIGURATION},
+        Role.ANALYST: {
+            Permission.CREATE_RESEARCH,
+            Permission.VIEW_RESEARCH,
+            Permission.MANAGE_COMPETITORS,
+            Permission.MANAGE_EVIDENCE,
+            Permission.VIEW_STRATEGY_REPORTS,
+        },
+        Role.VIEWER: {Permission.VIEW_RESEARCH, Permission.VIEW_STRATEGY_REPORTS},
+    }
+
+    for role, allowed_permissions in expected.items():
+        context = OrganizationContext(
+            AuthenticatedUser("user", "user@example.test", "session", False),
+            "org",
+            role,
+        )
+        for permission in Permission:
+            dependency = require_permission(permission)
+            if permission in allowed_permissions:
+                assert asyncio.run(dependency(context)) == context
+            else:
+                with pytest.raises(HTTPException) as error:
+                    asyncio.run(dependency(context))
+                assert error.value.status_code == 403
+
+    platform_admin = AuthenticatedUser(
+        "admin", "admin@example.test", "session", True
+    )
+    ordinary_user = AuthenticatedUser(
+        "user", "user@example.test", "session", False
+    )
+    assert asyncio.run(require_platform_admin(platform_admin)) == platform_admin
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(require_platform_admin(ordinary_user))
     assert error.value.status_code == 403
 
 
@@ -222,3 +274,46 @@ def test_api_rate_limit_applies_before_authentication(monkeypatch):
     assert response.headers["X-Request-ID"]
     assert calls and calls[0][0].startswith("ip:")
     assert len(fake_session.events) == 1
+
+
+def test_error_responses_do_not_echo_credentials_or_internal_exception_details():
+    from app.core.database import get_db_session
+
+    async def unused_session():
+        yield object()
+
+    app = create_app()
+    app.dependency_overrides[get_db_session] = unused_session
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/auth/login",
+        headers={"Origin": "http://localhost:3000"},
+        json={"email": "not-an-email", "password": "do-not-echo-this-password"},
+    )
+    assert response.status_code == 422
+    assert "do-not-echo-this-password" not in response.text
+    assert "input" not in response.text.lower()
+    assert response.headers["X-Request-ID"]
+
+
+def test_request_size_limit_and_correlation_id_are_enforced():
+    client = TestClient(create_app())
+    too_large = client.post(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Content-Type": "application/json",
+            "Content-Length": str(4 * 1024 * 1024 + 1),
+        },
+        content=b"",
+    )
+    assert too_large.status_code == 413
+    assert too_large.headers["X-Request-ID"]
+
+    malformed_length = client.post(
+        "/api/v1/auth/login",
+        headers={"Content-Length": "not-a-number"},
+        content=b"",
+    )
+    assert malformed_length.status_code == 400
+    assert malformed_length.headers["X-Request-ID"]

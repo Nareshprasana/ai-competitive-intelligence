@@ -7,6 +7,7 @@ thread-based checkpoint, and retrieve it (resume capability).
 
 import asyncio
 import os
+from uuid import uuid4
 
 import pytest
 from langgraph.graph import StateGraph, START, END
@@ -131,7 +132,8 @@ async def test_thread_based_checkpoint_store_and_retrieve():
             industry="AI Software",
             research_question="Pricing vs competitors?",
         )
-        config = {"configurable": {"thread_id": "thread-persist-1"}}
+        thread_id = f"org:org-dev:research:{uuid4().hex}"
+        config = {"configurable": {"thread_id": thread_id}}
         final = await graph.ainvoke(state, config=config)
         if isinstance(final, dict):
             final = ResearchState(**final)
@@ -146,6 +148,37 @@ async def test_thread_based_checkpoint_store_and_retrieve():
         channel_values = checkpoint.checkpoint.get("channel_values", {})
         assert channel_values.get("company_name") == "Acme Corp"
         assert channel_values.get("review_status") == "reviewed"
+        other_organization_checkpoint = await saver.aget_tuple(
+            {
+                "configurable": {
+                    "thread_id": f"org:another-org:research:{state.research_id}"
+                }
+            }
+        )
+        assert other_organization_checkpoint is None
+
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT checkpoint::text, metadata::text FROM checkpoints "
+                "WHERE thread_id = %s",
+                (thread_id,),
+            )
+            stored = cursor.fetchall()
+            cursor.execute(
+                "SELECT encode(blob, 'base64') FROM checkpoint_blobs "
+                "WHERE thread_id = %s AND blob IS NOT NULL",
+                (thread_id,),
+            )
+            stored.extend((row[0],) for row in cursor.fetchall())
+            cursor.execute(
+                "SELECT encode(blob, 'base64') FROM checkpoint_writes "
+                "WHERE thread_id = %s",
+                (thread_id,),
+            )
+            stored.extend((row[0],) for row in cursor.fetchall())
+        assert stored
+        assert "Acme Corp" not in repr(stored)
+        assert "Pricing vs competitors?" not in repr(stored)
     finally:
         conn.close()
 

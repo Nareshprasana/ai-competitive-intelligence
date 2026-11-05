@@ -5,6 +5,7 @@ import os
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.core.exceptions import ResearchError
 from app.core.config import get_settings
 from app.core.database import db
 from app.models.competitor import Competitor, CompetitorEvidence
@@ -226,7 +227,7 @@ async def test_competitor_duplicate_prevention(competitor_repo):
         verification_status="unverified",
     )
     # Creating the same competitor_id should fail (unique constraint)
-    try:
+    with pytest.raises(ResearchError):
         await competitor_repo.create(
             competitor_id="comp-dup-1",
             research_id="res-dup-1",
@@ -237,9 +238,6 @@ async def test_competitor_duplicate_prevention(competitor_repo):
             confidence=0.5,
             verification_status="unverified",
         )
-        assert False, "Expected unique constraint violation"
-    except Exception:
-        pass
 
 
 @pytest.mark.asyncio

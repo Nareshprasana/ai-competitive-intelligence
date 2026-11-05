@@ -106,19 +106,25 @@ export async function getResearch(researchId) {
 }
 
 export async function logout() {
-  if (accessToken) {
-    await authenticatedRequest(
-      "/api/v1/auth/logout",
-      { method: "POST" },
-      false,
-      false,
-    ).catch(() => null);
-  }
-  accessToken = null;
-  organizationId = null;
-  if (typeof window !== "undefined") {
-    window.localStorage.removeItem("acis-csrf-token");
-    window.localStorage.removeItem("acis-organization-id");
+  try {
+    if (!accessToken) {
+      await refreshAccessToken();
+    }
+    if (accessToken) {
+      await authenticatedRequest(
+        "/api/v1/auth/logout",
+        { method: "POST" },
+        false,
+        false,
+      );
+    }
+  } finally {
+    accessToken = null;
+    organizationId = null;
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("acis-csrf-token");
+      window.localStorage.removeItem("acis-organization-id");
+    }
   }
 }
 

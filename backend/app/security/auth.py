@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerifyMismatchError
+from argon2.exceptions import VerificationError
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import case, select
@@ -103,7 +103,7 @@ def hash_password(password: str) -> str:
 def verify_password(password_hash: str, password: str) -> bool:
     try:
         return password_hasher.verify(password_hash, password)
-    except (VerifyMismatchError, InvalidHashError, TypeError):
+    except (VerificationError, TypeError):
         return False
 
 

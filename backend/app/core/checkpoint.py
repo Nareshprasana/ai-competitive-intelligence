@@ -33,6 +33,7 @@ from langgraph.checkpoint.base import (
     RunnableConfig,
 )
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.serde.base import SerializerProtocol
 
 from app.security.crypto import EncryptedCheckpointSerializer
 from app.security.crypto import decrypt_text, encrypt_text
@@ -47,6 +48,15 @@ class AsyncPostgresSaver(PostgresSaver):
     Wraps the synchronous ``get_tuple``/``put``/``put_writes`` methods so
     LangGraph's async execution loop can checkpoint and resume runs.
     """
+
+    def __init__(
+        self, conn: Any, pipe: Any = None, serde: SerializerProtocol | None = None
+    ) -> None:
+        super().__init__(
+            conn,
+            pipe=pipe,
+            serde=serde if serde is not None else EncryptedCheckpointSerializer(),
+        )
 
     # -- async read -------------------------------------------------------
     async def aget_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
@@ -135,8 +145,10 @@ class AsyncPostgresSaver(PostgresSaver):
 
     def _unpack_value(self, channel: str, value: Any) -> Any:
         if not isinstance(value, dict) or _ENCRYPTED_INLINE_KEY not in value:
-            return value
+            raise ValueError("Checkpoint channel value is not encrypted.")
         encrypted = value[_ENCRYPTED_INLINE_KEY]
+        if not isinstance(encrypted, dict):
+            raise ValueError("Invalid encrypted checkpoint channel value.")
         if encrypted.get("mode") == "typed":
             payload = base64.b64decode(encrypted["payload"], validate=True)
             return self.serde.loads_typed((encrypted["type"], payload))

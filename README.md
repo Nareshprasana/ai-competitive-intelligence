@@ -144,10 +144,11 @@ uvicorn app.main:app --reload --port 8000
   `X-Organization-ID: <member-organization>`; the request body cannot set an
   organization ID.
 
-The dashboard signs in and selects a validated organization. Refresh tokens
-remain in HttpOnly cookies; the short-lived access token stays in browser
-memory. A non-secret CSRF token is kept in session storage/local browser state
-and is paired with an Origin check on refresh.
+The dashboard signs in and selects an organization that is checked against
+server-side membership on every protected request. Refresh tokens remain in
+HttpOnly cookies; the short-lived access token stays in browser memory. A
+non-secret CSRF token is kept in local storage and is paired with an Origin
+check on refresh.
 
 ## Frontend
 
@@ -231,7 +232,7 @@ Without `DATABASE_URL`, the application starts normally and the health endpoint 
 - Passwords use Argon2id. Access tokens are short-lived JWTs and each request checks the active session; refresh tokens are stored as hashes, rotated on use, and replay revokes the session.
 - Roles are `organization_owner`, `organization_admin`, `analyst`, and `viewer`; permission checks are centralized and server-side. Platform administrator actions are global and require the bootstrap role.
 - Research/profile/evidence payloads and user/invitation emails use AES-256-GCM. Email lookup uses a separate HMAC key. Password hashes and refresh/invitation token digests are one-way hashes.
-- Rate-limit counters and audit events are PostgreSQL-backed. Request bodies are size-limited (default 4 MB), correlation IDs are returned, validation errors omit submitted values, and audit records do not include request bodies.
+- Rate-limit counters and audit events are PostgreSQL-backed and shared across application processes using the same database. Request bodies are size-limited (default 4 MB), correlation IDs are returned, validation errors omit submitted values, and audit records do not include request bodies. Rate limiting is unavailable when PostgreSQL is unavailable; the protected API also requires PostgreSQL for authentication.
 - Production requires non-default JWT and email lookup keys, an externally managed AES keyring, secure cookies, a database, restricted CORS, and `DEBUG=false`. Keep old AES key IDs configured until data is re-encrypted. Rotate the email HMAC key only with a coordinated lookup-hash migration.
 - TLS 1.3 and optional mTLS must be enforced at the deployment reverse proxy/service mesh; the local FastAPI server does not establish that guarantee. Put the API behind a proxy that terminates TLS 1.3, rejects weaker protocols, and overwrites forwarded headers. Restrict PostgreSQL and checkpoint DB network access.
 - Refresh rotation and session revocation limit replay, but an already-issued bearer access token can be replayed until expiry or session revocation. Keep access TTL short and protect client devices.

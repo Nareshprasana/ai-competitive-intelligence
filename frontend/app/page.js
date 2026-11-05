@@ -87,12 +87,17 @@ export default function Home() {
   }
 
   async function handleLogout() {
-    await logout();
-    setAuthenticated(false);
-    setOrganizations([]);
-    setSelectedOrganization("");
-    setResearchId(null);
-    setResult(null);
+    try {
+      await logout();
+    } catch (logoutError) {
+      setError(logoutError.message || "Sign out could not be confirmed.");
+    } finally {
+      setAuthenticated(false);
+      setOrganizations([]);
+      setSelectedOrganization("");
+      setResearchId(null);
+      setResult(null);
+    }
   }
 
   function handleOrganizationChange(event) {
