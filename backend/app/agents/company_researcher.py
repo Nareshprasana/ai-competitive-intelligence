@@ -93,11 +93,7 @@ class CompanyResearcherAgent(BaseAgent):
         Returns a dict with ``company_profile`` and ``evidence`` suitable for
         merging into ResearchState.
         """
-        logger.info(
-            "CompanyResearcherAgent researching %s (research_id=%s)",
-            company_name,
-            research_id,
-        )
+        logger.info("CompanyResearcherAgent started research_id=%s", research_id)
 
         # 1. Generate search queries based on research aspects.
         queries = self._generate_search_queries(company_name, industry, research_question)
@@ -141,7 +137,9 @@ class CompanyResearcherAgent(BaseAgent):
                 )
             except (LLMConfigurationError, ResearchError) as exc:
                 logger.warning(
-                    "LLM extraction failed for %s: %s", company_name, exc
+                    "LLM extraction failed research_id=%s error_type=%s",
+                    research_id,
+                    type(exc).__name__,
                 )
                 # Fall back to search-snippet-based profile (unverified).
                 company_profile = self._build_fallback_profile(
@@ -150,8 +148,8 @@ class CompanyResearcherAgent(BaseAgent):
         else:
             # No LLM configured: build profile from search snippets only.
             logger.info(
-                "LLM not configured; building search-snippet profile for %s",
-                company_name,
+                "LLM not configured; building unverified profile research_id=%s",
+                research_id,
             )
             company_profile = self._build_fallback_profile(
                 company_name, industry, all_results
@@ -173,7 +171,9 @@ class CompanyResearcherAgent(BaseAgent):
         conflicts = detect_conflicts(evidence_items)
         if conflicts:
             logger.warning(
-                "Detected %d evidence conflicts for %s", len(conflicts), company_name
+                "Detected %d evidence conflicts research_id=%s",
+                len(conflicts),
+                research_id,
             )
 
         # 6. Assemble result dict for state merge.

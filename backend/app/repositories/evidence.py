@@ -59,10 +59,14 @@ class EvidenceRepository:
             return self._to_dict(record)
         except Exception as exc:
             await self._session.rollback()
-            logger.exception("Failed to create evidence claim %s", evidence_id)
+            logger.error(
+                "Evidence persistence failed evidence_id=%s error_type=%s",
+                evidence_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to persist evidence claim.",
-                details={"evidence_id": evidence_id, "error": str(exc)},
+                details={"evidence_id": evidence_id},
             ) from exc
 
     async def get_by_id(

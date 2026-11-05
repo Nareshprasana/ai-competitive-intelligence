@@ -64,10 +64,14 @@ class ResearchRepository:
             return self._to_dict(record)
         except Exception as exc:  # noqa: BLE001 - translate DB failures cleanly
             await self._session.rollback()
-            logger.exception("Failed to create research record %s", research_id)
+            logger.error(
+                "Research persistence failed research_id=%s error_type=%s",
+                research_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to persist research record.",
-                details={"research_id": research_id, "error": str(exc)},
+                details={"research_id": research_id},
             ) from exc
 
     async def get_by_id(
@@ -124,10 +128,14 @@ class ResearchRepository:
             return self._to_dict(record)
         except Exception as exc:  # noqa: BLE001 - translate DB failures cleanly
             await self._session.rollback()
-            logger.exception("Failed to update research record %s", research_id)
+            logger.error(
+                "Research update failed research_id=%s error_type=%s",
+                research_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to update research record.",
-                details={"research_id": research_id, "error": str(exc)},
+                details={"research_id": research_id},
             ) from exc
 
     async def list_by_organization(

@@ -6,6 +6,15 @@ import os
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.models.identity import Organization
+from app.security.auth import (
+    AuthenticatedUser,
+    OrganizationContext,
+    Role,
+    get_current_user,
+    get_organization_context,
+)
+
 TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or ""
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
@@ -32,9 +41,30 @@ def _make_app():
 @pytest.fixture
 async def client():
     app = _make_app()
+    async def current_user():
+        return AuthenticatedUser("test-user", "test@example.com", "test-session", False)
+
+    async def organization_context():
+        return OrganizationContext(
+            AuthenticatedUser("test-user", "test@example.com", "test-session", False),
+            "org-dev",
+            Role.ANALYST,
+        )
+
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_organization_context] = organization_context
+    from app.core.database import db
+
+    async with db.session_factory() as session:
+        if await session.get(Organization, "org-dev") is None:
+            session.add(Organization(organization_id="org-dev", name="Test Organization"))
+            await session.commit()
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
-        yield c
+    try:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio

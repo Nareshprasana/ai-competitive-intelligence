@@ -4,7 +4,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from app.core.logging import get_logger
 from app.graph.state import ResearchState
+
+logger = get_logger("app.graph.nodes.base")
 
 
 def utc_now_iso() -> str:
@@ -80,9 +83,14 @@ async def run_node(
             mock=mock,
             details={"exception": type(exc).__name__},
         )
+        logger.error(
+            "Graph node failed node=%s error_type=%s",
+            node_name,
+            type(exc).__name__,
+        )
         error_entry = {
             "node_name": node_name,
-            "error": str(exc),
+            "error": "The operation could not be completed.",
             "details": {"exception": type(exc).__name__},
             "timestamp": completed_at,
         }

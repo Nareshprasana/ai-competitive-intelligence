@@ -1,8 +1,34 @@
 """Integration tests for the research API endpoints."""
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.security.auth import (
+    AuthenticatedUser,
+    OrganizationContext,
+    Role,
+    get_current_user,
+    get_organization_context,
+)
+
+
+@pytest.fixture(autouse=True)
+def authenticated_test_context():
+    async def current_user():
+        return AuthenticatedUser("test-user", "test@example.com", "test-session", False)
+
+    async def organization_context():
+        return OrganizationContext(
+            AuthenticatedUser("test-user", "test@example.com", "test-session", False),
+            "org-dev",
+            Role.ANALYST,
+        )
+
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_organization_context] = organization_context
+    yield
+    app.dependency_overrides.clear()
 
 
 async def _client():

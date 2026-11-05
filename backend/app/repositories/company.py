@@ -49,10 +49,14 @@ class CompanyRepository:
             return self._to_dict(record)
         except Exception as exc:
             await self._session.rollback()
-            logger.exception("Failed to create company profile %s", company_id)
+            logger.error(
+                "Company profile persistence failed company_id=%s error_type=%s",
+                company_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to persist company profile.",
-                details={"company_id": company_id, "error": str(exc)},
+                details={"company_id": company_id},
             ) from exc
 
     async def get_by_id(
@@ -120,10 +124,14 @@ class CompanyRepository:
             return self._to_dict(record)
         except Exception as exc:
             await self._session.rollback()
-            logger.exception("Failed to update company profile %s", company_id)
+            logger.error(
+                "Company profile update failed company_id=%s error_type=%s",
+                company_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to update company profile.",
-                details={"company_id": company_id, "error": str(exc)},
+                details={"company_id": company_id},
             ) from exc
 
     @staticmethod

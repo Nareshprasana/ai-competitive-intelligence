@@ -63,8 +63,11 @@ def configure_logging(level: Optional[str] = None) -> None:
     logger.addHandler(handler)
 
     # Keep noisy third-party loggers at WARNING unless debug is on.
+    for name in ("sqlalchemy.engine",):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
     if log_level != "DEBUG":
-        for name in ("uvicorn", "uvicorn.error", "sqlalchemy.engine", "langgraph"):
+        for name in ("uvicorn", "uvicorn.error", "langgraph"):
             logging.getLogger(name).setLevel(logging.WARNING)
 
 

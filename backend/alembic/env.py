@@ -22,6 +22,16 @@ from app.core.database import Base  # noqa: E402
 from app.models.research import Research  # noqa: E402,F401
 from app.models.company import CompanyProfile, EvidenceClaim  # noqa: E402,F401
 from app.models.competitor import Competitor, CompetitorEvidence  # noqa: E402,F401
+from app.models.identity import (  # noqa: E402,F401
+    AuditEvent,
+    AuthSession,
+    Organization,
+    OrganizationInvitation,
+    OrganizationMembership,
+    RateLimitBucket,
+    RefreshToken,
+    User,
+)
 
 # pgvector types are imported for metadata completeness; the migration itself
 # uses SQLAlchemy core types so it remains runnable even before pgvector is

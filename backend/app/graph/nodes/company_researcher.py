@@ -63,6 +63,7 @@ async def _company_researcher(state: ResearchState) -> dict:
         evidence = result.get("evidence", [])
 
         # Persist to PostgreSQL when configured.
+        persistence_status = "skipped"
         if db.is_available:
             try:
                 await _persist_company_research(
@@ -73,13 +74,17 @@ async def _company_researcher(state: ResearchState) -> dict:
                     company_profile=company_profile,
                     evidence=evidence,
                 )
+                persistence_status = "completed"
             except Exception as exc:  # noqa: BLE001 - log but don't fail graph
                 logger.warning(
-                    "Failed to persist company research %s: %s", research_id, exc
+                    "Company research persistence failed research_id=%s error_type=%s",
+                    research_id,
+                    type(exc).__name__,
                 )
 
         details = result.get("_metadata_details", {})
         details["mock"] = False
+        details["persistence_status"] = persistence_status
 
         return {
             "company_profile": company_profile,

@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class ResearchRequest(BaseModel):
     """Request to start a competitive-intelligence research run."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     company_name: str = Field(
         ..., min_length=1, max_length=200, description="Name of the company to research."
@@ -27,11 +27,6 @@ class ResearchRequest(BaseModel):
         max_length=2000,
         description="The specific competitive question to answer.",
     )
-    organization_id: Optional[str] = Field(
-        default=None,
-        description="Owning organization (future tenant isolation). Defaults to settings.default_organization_id.",
-    )
-
     @field_validator("company_name", "industry", "research_question")
     @classmethod
     def _non_empty(cls, v: str) -> str:

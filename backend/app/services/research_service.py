@@ -41,17 +41,6 @@ def _settings_default_organization_id() -> str:
     return get_settings().default_organization_id
 
 
-def _resolve_organization_id(request: ResearchRequest) -> str:
-    """Resolve the owning organization, enforcing server-side ownership.
-
-    A client-supplied ``organization_id`` is accepted as a hint but the
-    authoritative value is the request's organization or the default. This
-    prevents clients from claiming ownership of another organization's
-    research records.
-    """
-    return request.organization_id or _settings_default_organization_id()
-
-
 def _state_to_result(state: ResearchState) -> ResearchResult:
     """Convert a final ResearchState into a ResearchResult schema."""
     errors: List[Dict[str, Any]] = list(state.errors or [])
@@ -203,7 +192,9 @@ def _row_to_result(row: Dict[str, Any]) -> ResearchResult:
     )
 
 
-async def run_research(request: ResearchRequest) -> ResearchResult:
+async def run_research(
+    request: ResearchRequest, *, organization_id: Optional[str] = None
+) -> ResearchResult:
     """Execute the full research graph and return structured results.
 
     The run is synchronous within the request (deterministic mock agents, no
@@ -213,7 +204,10 @@ async def run_research(request: ResearchRequest) -> ResearchResult:
     When PostgreSQL is configured, the result is persisted via the repository
     and the LangGraph checkpointer is used for thread-based checkpointing.
     """
-    organization_id = _resolve_organization_id(request)
+    if organization_id is None:
+        if db.is_available:
+            raise ValueError("A validated organization context is required.")
+        organization_id = _settings_default_organization_id()
     research_id = f"res-{_new_id()}"
 
     initial_state = ResearchState(
@@ -227,7 +221,9 @@ async def run_research(request: ResearchRequest) -> ResearchResult:
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    logger.info("Starting research %s for %s", research_id, request.company_name)
+    logger.info(
+        "Starting research %s for organization=%s", research_id, organization_id
+    )
 
     graph = get_graph()
     checkpointer: Optional[AsyncPostgresSaver] = None
@@ -237,10 +233,14 @@ async def run_research(request: ResearchRequest) -> ResearchResult:
         try:
             checkpointer = await db.get_checkpointer()
             graph = get_graph(checkpointer=checkpointer)
-            config = {"configurable": {"thread_id": research_id}}
-        except Exception as exc:  # noqa: BLE001 - degrade gracefully
+            config = {
+                "configurable": {
+                    "thread_id": f"org:{organization_id}:research:{research_id}"
+                }
+            }
+        except Exception:  # noqa: BLE001 - degrade gracefully
             logger.warning(
-                "Checkpointer unavailable, running without persistence: %s", exc
+                "Checkpointer unavailable; research will run without checkpoint recovery."
             )
             checkpointer = None
             config = None

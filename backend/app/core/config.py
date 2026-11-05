@@ -8,7 +8,7 @@ degrade gracefully rather than crash the application at import time.
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,8 +44,25 @@ class Settings(BaseSettings):
         return v
 
     # --- Security ---
-    secret_key: str = Field(default="dev-secret-do-not-use-in-production")
     max_request_size_mb: int = Field(default=4)
+    auth_jwt_signing_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias="AUTH_JWT_SIGNING_KEY"
+    )
+    auth_email_lookup_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias="AUTH_EMAIL_LOOKUP_KEY"
+    )
+    auth_access_token_minutes: int = Field(default=10, ge=1, le=60)
+    auth_refresh_token_days: int = Field(default=30, ge=1, le=90)
+    auth_cookie_secure: bool = Field(default=False)
+    data_encryption_keys: SecretStr = Field(
+        default=SecretStr(""), validation_alias="DATA_ENCRYPTION_KEYS"
+    )
+    data_encryption_active_key_id: str = Field(
+        default="", validation_alias="DATA_ENCRYPTION_ACTIVE_KEY_ID"
+    )
+    api_rate_limit_requests: int = Field(default=120, ge=1)
+    auth_rate_limit_requests: int = Field(default=20, ge=1)
+    rate_limit_window_seconds: int = Field(default=60, ge=1)
 
     # --- LLM (provider-independent, OpenRouter-compatible) ---
     llm_provider: str = Field(default="openrouter")
@@ -60,7 +77,7 @@ class Settings(BaseSettings):
     database_url: Optional[str] = Field(default=None)
     database_test_url: Optional[str] = Field(default=None)
 
-    # --- Organization / tenant isolation (future auth/RBAC) ---
+    # --- Organization / tenant defaults ---
     default_organization_id: str = Field(default="org-dev")
 
     # --- Search provider (company research agent) ---
@@ -104,6 +121,35 @@ class Settings(BaseSettings):
     def search_provider_is_mock(self) -> bool:
         """True when using the deterministic mock search provider (no network)."""
         return self.search_provider.lower() == "mock"
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.app_env.lower() != "production":
+            return self
+        if self.debug:
+            raise ValueError("DEBUG must be false in production.")
+        if len(self.auth_jwt_signing_key.get_secret_value()) < 32:
+            raise ValueError(
+                "AUTH_JWT_SIGNING_KEY must contain at least 32 characters in production."
+            )
+        if len(self.auth_email_lookup_key.get_secret_value()) < 32:
+            raise ValueError(
+                "AUTH_EMAIL_LOOKUP_KEY must contain at least 32 characters in production."
+            )
+        if not self.auth_cookie_secure:
+            raise ValueError("AUTH_COOKIE_SECURE must be true in production.")
+        if "*" in self.backend_cors_origins:
+            raise ValueError("Wildcard CORS origins are not allowed in production.")
+        if not self.backend_cors_origins or any(
+            "localhost" in origin or "127.0.0.1" in origin
+            for origin in self.backend_cors_origins
+        ):
+            raise ValueError(
+                "Production CORS origins must be explicitly configured public origins."
+            )
+        if not self.database_url:
+            raise ValueError("DATABASE_URL is required in production.")
+        return self
 
 
 @lru_cache()

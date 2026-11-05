@@ -26,6 +26,7 @@ from app.core.checkpoint import AsyncPostgresSaver
 from app.core.config import get_settings
 from app.core.exceptions import DatabaseUnavailableError
 from app.core.logging import get_logger
+from app.security.crypto import EncryptedCheckpointSerializer
 
 logger = get_logger("app.core.database")
 
@@ -142,7 +143,7 @@ class DatabaseManager:
         conn = await asyncio.to_thread(
             Connection.connect, url, autocommit=True, prepare_threshold=0
         )
-        saver = AsyncPostgresSaver(conn)
+        saver = AsyncPostgresSaver(conn, serde=EncryptedCheckpointSerializer())
         try:
             await asyncio.to_thread(saver.setup)
         except Exception:
@@ -222,7 +223,9 @@ class DatabaseManager:
                 "error": None,
             }
         except Exception as exc:  # noqa: BLE001 - report any connectivity failure
-            logger.warning("Database health check failed: %s", exc)
+            logger.warning(
+                "Database health check failed error_type=%s", type(exc).__name__
+            )
             return {
                 "available": False,
                 "configured": True,

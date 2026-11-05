@@ -16,6 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.security.crypto import EncryptedJSON, EncryptedText
 
 
 class Research(Base):
@@ -28,17 +29,30 @@ class Research(Base):
         sa.String(64), unique=True, index=True, nullable=False
     )
     organization_id: Mapped[str] = mapped_column(
-        sa.String(128), index=True, nullable=False
+        sa.String(128),
+        sa.ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
     )
-    company_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
-    industry: Mapped[str] = mapped_column(sa.String(255), nullable=False)
-    research_question: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    company_name: Mapped[str] = mapped_column(
+        EncryptedText("researches.company_name"), nullable=False
+    )
+    industry: Mapped[str] = mapped_column(
+        EncryptedText("researches.industry"), nullable=False
+    )
+    research_question: Mapped[str] = mapped_column(
+        EncryptedText("researches.research_question"), nullable=False
+    )
     status: Mapped[str] = mapped_column(sa.String(32), index=True, nullable=False)
     review_status: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
     # Full structured result produced by the LangGraph workflow.
-    results: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+    results: Mapped[dict | None] = mapped_column(
+        EncryptedJSON("researches.results"), nullable=True
+    )
     # Errors recorded by any failed graph node.
-    errors: Mapped[list | None] = mapped_column(sa.JSON, nullable=True)
+    errors: Mapped[list | None] = mapped_column(
+        EncryptedJSON("researches.errors"), nullable=True
+    )
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

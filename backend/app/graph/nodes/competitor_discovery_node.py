@@ -93,9 +93,9 @@ async def _competitor_discovery(state: ResearchState) -> dict:
                 persistence_status = "completed"
             except Exception as exc:  # noqa: BLE001 - log but don't fail graph
                 logger.warning(
-                    "Failed to persist competitor discovery %s: %s",
+                    "Competitor persistence failed research_id=%s error_type=%s",
                     research_id,
-                    exc,
+                    type(exc).__name__,
                 )
                 persistence_status = "failed"
 

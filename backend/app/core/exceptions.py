@@ -10,6 +10,10 @@ from typing import Any, Dict, Optional
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
+from app.core.logging import get_logger
+
+logger = get_logger("app.core.exceptions")
+
 
 class ACISException(Exception):
     """Base exception for ACIS application errors."""
@@ -112,13 +116,19 @@ async def validation_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
     """Handler for Pydantic/Starlette validation errors."""
+    errors = []
+    if hasattr(exc, "errors"):
+        errors = [
+            {"location": list(error.get("loc", ())), "type": error.get("type", "invalid")}
+            for error in exc.errors()
+        ]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error": True,
             "error_code": "VALIDATION_ERROR",
             "message": "Request validation failed.",
-            "details": {"errors": str(exc)},
+            "details": {"errors": errors},
         },
     )
 
@@ -127,6 +137,11 @@ async def unhandled_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
     """Catch-all handler. Never leaks internal stack traces to clients."""
+    logger.error(
+        "Unhandled request failure request_id=%s error_type=%s",
+        getattr(request.state, "request_id", "unavailable"),
+        type(exc).__name__,
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={

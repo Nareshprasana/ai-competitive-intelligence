@@ -81,14 +81,14 @@ class CompetitorRepository:
             return self._to_dict(record)
         except Exception as exc:
             await self._session.rollback()
-            logger.exception("Failed to create competitor %s", competitor_id)
+            logger.error(
+                "Competitor persistence failed competitor_id=%s error_type=%s",
+                competitor_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to persist competitor.",
-                details={
-                    "competitor_id": competitor_id,
-                    "company_name": company_name,
-                    "error": str(exc),
-                },
+                details={"competitor_id": competitor_id},
             ) from exc
 
     async def get_by_id(
@@ -269,10 +269,14 @@ class CompetitorEvidenceRepository:
             return self._to_dict(record)
         except Exception as exc:
             await self._session.rollback()
-            logger.exception("Failed to create competitor evidence %s", evidence_id)
+            logger.error(
+                "Competitor evidence persistence failed evidence_id=%s error_type=%s",
+                evidence_id,
+                type(exc).__name__,
+            )
             raise ResearchError(
                 "Failed to persist competitor evidence.",
-                details={"evidence_id": evidence_id, "error": str(exc)},
+                details={"evidence_id": evidence_id},
             ) from exc
 
     async def get_by_id(

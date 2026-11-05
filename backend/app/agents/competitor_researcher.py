@@ -109,12 +109,7 @@ class CompetitorResearcherAgent(BaseAgent):
         if not company_name:
             raise ValueError("company_name is required for competitor discovery.")
 
-        logger.info(
-            "CompetitorResearcherAgent discovering competitors for %s "
-            "(research_id=%s)",
-            company_name,
-            research_id,
-        )
+        logger.info("CompetitorResearcherAgent started research_id=%s", research_id)
 
         # 1. Analyze the researched company's profile for context.
         company_context = self._build_company_context(
@@ -156,7 +151,9 @@ class CompetitorResearcherAgent(BaseAgent):
             except Exception as exc:
                 search_failures += 1
                 logger.warning(
-                    "Competitor search failed for query %r: %s", q.query, exc
+                    "Competitor search failed research_id=%s error_type=%s",
+                    research_id,
+                    type(exc).__name__,
                 )
                 continue
             for result in results:
@@ -216,17 +213,17 @@ class CompetitorResearcherAgent(BaseAgent):
             except Exception as exc:
                 llm_extraction_failed = True
                 logger.warning(
-                    "LLM candidate extraction failed for %s: %s",
-                    company_name,
-                    exc,
+                    "LLM candidate extraction failed research_id=%s error_type=%s",
+                    research_id,
+                    type(exc).__name__,
                 )
                 raw_candidates = self._extract_candidates_heuristic(
                     company_name, all_results
                 )
         else:
             logger.info(
-                "LLM not configured; using heuristic candidate extraction for %s",
-                company_name,
+                "LLM not configured; using heuristic extraction research_id=%s",
+                research_id,
             )
             raw_candidates = self._extract_candidates_heuristic(
                 company_name, all_results

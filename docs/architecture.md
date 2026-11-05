@@ -8,13 +8,19 @@ ACIS is a modular monorepo. The backend is a FastAPI service orchestrating a Lan
 
 ```
 Client (Next.js)
-     │  POST /api/v1/research  {company_name, industry, research_question}
+     │  Sign in → short-lived bearer token + HttpOnly refresh cookie
+     │  POST /api/v1/research + X-Organization-ID
      ▼
 FastAPI (app/main.py)
      │
+     ├─► Authentication + shared rate limiting
+     │       ├─ Argon2id password verification
+     │       ├─ JWT signature/expiry + persisted session status
+     │       └─ Active organization membership + centralized RBAC
+     │
      ├─► Research Service (services/research_service.py)
      │       ├─ builds initial ResearchState
-     │       ├─ enforces organization ownership (server-side)
+     │       ├─ receives only trusted organization context
      │       ├─► LangGraph StateGraph (graph/builder.py)
      │       │   ├─ initialize_research
      │       │   ├─ research_planner
@@ -82,26 +88,43 @@ additional searches.
 
 When `DATABASE_URL` is configured, research records are persisted to PostgreSQL:
 
-- `research_id` (unique, indexed), `organization_id` (indexed), `company_name`, `industry`, `research_question`
-- `status`, `review_status` (indexed), `results` (JSON), `errors` (JSON)
+- `research_id` (unique, indexed), `organization_id` (indexed), encrypted `company_name`, `industry`, and `research_question`
+- `status`, `review_status` (indexed), encrypted `results` and `errors` JSON payloads
 - `created_at`, `updated_at` (timestamptz, server default `now()`)
 - Composite index `(organization_id, status)` for org-scoped lookups
 
 All repository queries filter by `organization_id`, so records are never exposed across organizations.
 
+Migration `0004_identity_and_tenant_ownership` creates
+`organizations`, `users`, `organization_memberships`, `organization_invitations`,
+`auth_sessions`, `refresh_tokens`, `audit_events`, and `rate_limit_buckets`.
+Migration `0005_encrypt_sensitive_payloads` encrypts existing research,
+company, competitor, evidence, user-email, invitation-email, and checkpoint
+payloads. Database query keys such as IDs, roles, status, timestamps, and
+HMAC email lookup digests remain available to indexes; passwords and bearer or
+refresh tokens are never stored in plaintext.
+
 ## LangGraph checkpointing
 
 When `DATABASE_URL` is configured, `AsyncPostgresSaver` (from `langgraph-checkpoint-postgres`) provides PostgreSQL checkpoint storage in dedicated `checkpoints` / `checkpoint_writes` tables — SEPARATE from the business `researches` table.
 
-- Thread-based execution: `config={"configurable": {"thread_id": "<research_id>"}}`
+- Thread-based execution: `config={"configurable": {"thread_id": "org:<organization-id>:research:<research-id>"}}`
 - Checkpoints are stored per thread and can be retrieved for resume
 - `AsyncPostgresSaver.setup()` creates the checkpoint tables at startup
+- Checkpoint channel values, metadata, blobs, and writes use AES-GCM encryption;
+  migration `0005_encrypt_sensitive_payloads` encrypts existing checkpoint rows.
+  The organization namespace prevents an unscoped research ID from selecting
+  another organization's thread.
 
 Because the installed `PostgresSaver` exposes working sync methods but raises `NotImplementedError` on its async tuple methods, `app/core/checkpoint.py::AsyncPostgresSaver` wraps `get_tuple`/`put`/`put_writes` in `asyncio.to_thread` so LangGraph's `ainvoke` can checkpoint and resume.
 
 ## Database degradation
 
-Without `DATABASE_URL`, the application starts normally. The SQLAlchemy engine is not created, `db.health_check()` returns `available: false` honestly, and research results fall back to an in-memory store (process-local only). No connection is ever falsely reported as successful.
+Without `DATABASE_URL`, the application starts normally and `db.health_check()`
+reports `available: false`. Direct service/unit tests may use the process-local
+fallback store, but the authenticated API is unavailable because identity,
+membership, rate-limit, audit, persistence, and checkpoint checks require
+PostgreSQL. No API request silently falls back to unauthenticated access.
 
 ## LLM abstraction
 
@@ -112,11 +135,45 @@ Without `DATABASE_URL`, the application starts normally. The SQLAlchemy engine i
 - Input validation via Pydantic (min/max lengths, non-empty).
 - Environment-based secrets; none hardcoded; none in Git.
 - Restricted CORS (configured origins, no wildcard).
-- Request-size limit (default 4 MB).
-- Safe error messages to clients; internal details not leaked.
-- `organization_id` ownership modeled and enforced server-side for tenant isolation.
+- Research, profile, competitor, and evidence lookups remain organization-filtered in repositories and are additionally guarded by active user membership and RBAC. Client-supplied research organization IDs are rejected.
+- Platform administrators are provisioned by `python -m app.cli bootstrap-admin`; ordinary users join via hashed, expiring, single-use invitations. Organization creation issues the initial owner invitation.
+- Organization permission matrix (all checks are server-side):
+
+  | Permission | Owner | Admin | Analyst | Viewer |
+  |---|---:|---:|---:|---:|
+  | Manage users/invitations | Yes | Yes | No | No |
+  | Manage organization/configuration | Yes | No | No | No |
+  | Create/view/delete research | Yes | Yes | Create/view | View |
+  | Manage competitors/evidence | Yes | Yes | Yes | No |
+  | View strategy reports | Yes | Yes | Yes | Yes |
+
+  Platform administrators use separate control-plane dependencies for organization creation and bootstrap administration; platform status does not bypass organization membership on research endpoints.
+- Passwords use Argon2id. Access JWTs expire quickly and every request checks session status; refresh tokens are stored as SHA-256 digests, rotated once, and replay revokes the session. Refresh uses an HttpOnly cookie plus double-submit CSRF and Origin checks.
+- User and invitation emails, research results, profiles, claims/snippets, and all checkpoint payload components are AES-256-GCM encrypted. Email lookup uses a separate HMAC key. Email HMAC key rotation requires re-indexing lookup hashes; AES key rotation retains old key IDs until re-encryption.
+- PostgreSQL-backed rate-limit buckets and API audit events are shared across workers. The API applies an IP limit before authentication, plus account-specific login and authenticated-user limits. Request bodies are bounded even without a content-length header; error validation omits submitted values, and audit records do not store request bodies. Configure trusted-proxy client-IP handling at deployment; the app does not trust arbitrary forwarded-IP headers.
+- Root, health, login, refresh, and invitation acceptance are public by design; organization listing and business operations require authentication. API docs/OpenAPI are disabled in production.
+- Production requires `DEBUG=false`, configured signing and email lookup keys, a valid encryption keyring, secure cookies, a database, and restricted CORS. TLS 1.3 and optional mTLS are deployment responsibilities: terminate TLS at a trusted reverse proxy/service mesh that rejects weaker TLS, and restrict direct backend access. Local HTTP does not prove TLS enforcement.
+- Bearer access tokens can be replayed until expiry or revocation; short TTL and session checks limit this exposure but do not prevent replay of a still-valid stolen access token.
 - Page fetching resolves DNS once per request, rejects the request if any returned address is non-public, and connects to a vetted IP literal while preserving the original HTTP Host header and HTTPS SNI/certificate hostname. Redirects are followed manually and each destination is resolved and checked again. This closes the DNS-rebinding gap between a separate preflight lookup and HTTP client's connection-time lookup.
 - DNS pinning is implemented at the HTTP request layer; it relies on the configured HTTPX client/httpcore honoring the pinned literal URL and TLS `sni_hostname` extension. Changes to custom transports or proxy configuration require renewed SSRF validation.
+
+### Phase 2D database setup and verification
+
+Migrations `0004_identity_and_tenant_ownership` and
+`0005_encrypt_sensitive_payloads` add identity/ownership controls and encrypt
+existing sensitive columns and checkpoint rows. The encryption migration is
+intentionally one-way; restore a verified backup and run an approved decrypt
+migration rather than downgrading encrypted records to plaintext.
+
+For persistence, authentication, rate-limit, and checkpoint tests, create a
+dedicated PostgreSQL database whose name contains a delimited `test` component.
+Set `ACIS_TEST_DATABASE_URL` and `DATABASE_URL` to that database, then configure
+test-only `AUTH_JWT_SIGNING_KEY`, `AUTH_EMAIL_LOOKUP_KEY`,
+`DATA_ENCRYPTION_ACTIVE_KEY_ID`, and `DATA_ENCRYPTION_KEYS`. Use the same
+encryption keyring for `alembic upgrade head` and the test process. The pytest
+guard rejects non-PostgreSQL or non-test database names and refuses missing
+encryption/authentication keys. Never run these migrations or destructive
+tests against development or production data.
 
 ## Company Research Agent pipeline (Phase 2A)
 
@@ -201,6 +258,6 @@ All repository queries filter by `organization_id`, so records are never exposed
 
 ## Frontend
 
-Next.js App Router, JavaScript, Tailwind CSS, shadcn-style components. Calls `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`). Includes a research submission form, status polling, execution-metadata display, and structured report rendering.
+Next.js App Router, JavaScript, Tailwind CSS, shadcn-style components. Calls `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`). Signs in through the public auth endpoint, restores sessions through CSRF-protected refresh, selects one of the user's validated memberships, and sends bearer and organization headers for research submission and retrieval.
 
 > The environment used to build this phase has no working `npm install` path to the npm registry (tarball downloads hang), so the frontend could not be `npm install`ed or started here. Frontend verification (dev server, production build, e2e research) is therefore documented as a limitation, not a claimed result.

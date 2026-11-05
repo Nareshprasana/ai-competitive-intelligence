@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.research import Research  # noqa: F401 - register research table
+from app.security.crypto import EncryptedJSON, EncryptedText
 
 
 class Competitor(Base):
@@ -30,7 +31,10 @@ class Competitor(Base):
         sa.String(64), index=True, nullable=False
     )
     organization_id: Mapped[str] = mapped_column(
-        sa.String(128), index=True, nullable=False
+        sa.String(128),
+        sa.ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
     )
     company_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     company_key: Mapped[str] = mapped_column(sa.String(255), nullable=False)
@@ -39,12 +43,18 @@ class Competitor(Base):
     competitor_type: Mapped[str] = mapped_column(
         sa.String(32), index=True, nullable=False
     )
-    company_description: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
-    profile: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+    company_description: Mapped[str | None] = mapped_column(
+        EncryptedText("competitors.company_description"), nullable=True
+    )
+    profile: Mapped[dict | None] = mapped_column(
+        EncryptedJSON("competitors.profile"), nullable=True
+    )
     qualification_score: Mapped[float] = mapped_column(sa.Float, nullable=False)
     confidence: Mapped[float] = mapped_column(sa.Float, nullable=False)
     verification_status: Mapped[str] = mapped_column(sa.String(32), nullable=False)
-    source_references: Mapped[list | None] = mapped_column(sa.JSON, nullable=True)
+    source_references: Mapped[list | None] = mapped_column(
+        EncryptedJSON("competitors.source_references"), nullable=True
+    )
     created_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
@@ -112,12 +122,17 @@ class CompetitorEvidence(Base):
         sa.String(64), index=True, nullable=False
     )
     organization_id: Mapped[str] = mapped_column(
-        sa.String(128), index=True, nullable=False
+        sa.String(128),
+        sa.ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
     )
     research_id: Mapped[str] = mapped_column(
         sa.String(64), index=True, nullable=False
     )
-    claim: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    claim: Mapped[str] = mapped_column(
+        EncryptedText("competitor_evidence.claim"), nullable=False
+    )
     source_url: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
     source_title: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)
     source_domain: Mapped[str] = mapped_column(sa.String(255), index=True, nullable=False)
@@ -130,7 +145,9 @@ class CompetitorEvidence(Base):
     evidence_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     confidence: Mapped[float] = mapped_column(sa.Float, nullable=False)
     verification_status: Mapped[str] = mapped_column(sa.String(32), nullable=False)
-    raw_snippet: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    raw_snippet: Mapped[str | None] = mapped_column(
+        EncryptedText("competitor_evidence.raw_snippet"), nullable=True
+    )
 
     competitor: Mapped["Competitor"] = relationship(
         "Competitor",

@@ -140,13 +140,13 @@ async def fetch_page(
     treated as untrusted.
     """
     if not validate_url_for_fetch(url):
-        logger.warning("Blocked fetch of non-public URL: %s", url)
+        logger.warning("Blocked fetch of a non-public URL.")
         return None
 
     current_url = url
     for _ in range(6):
         if not validate_url_for_fetch(current_url):
-            logger.warning("Blocked fetch of non-public URL: %s", current_url)
+            logger.warning("Blocked fetch of a non-public URL.")
             return None
 
         parsed = urlsplit(current_url)
@@ -211,7 +211,7 @@ async def fetch_page(
                         break
                 return bytes(chunks).decode("utf-8", errors="replace")
         except httpx.HTTPError as exc:
-            logger.warning("Fetch failed for %s: %s", current_url, exc)
+            logger.warning("Page fetch failed error_type=%s", type(exc).__name__)
             return None
     logger.warning("Blocked fetch after too many redirects.")
     return None
