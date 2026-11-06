@@ -22,6 +22,7 @@ from app.graph.nodes.company_researcher import company_researcher
 from app.graph.nodes.competitor_discovery_node import competitor_discovery
 from app.graph.nodes.evidence_validator import evidence_validator
 from app.graph.nodes.evidence_validator_mock import evidence_validator_mock
+from app.graph.nodes.strategic_analyst import strategic_analyst
 from app.graph.nodes.strategic_analyst_mock import strategic_analyst_mock
 from app.graph.nodes.report_generator_mock import report_generator_mock
 from app.graph.nodes.finalize_research import finalize_research
@@ -34,7 +35,7 @@ NODE_ORDER = [
     "company_researcher",
     "competitor_discovery",
     "evidence_validator",
-    "strategic_analyst_mock",
+    "strategic_analyst",
     "report_generator_mock",
     "finalize_research",
 ]
@@ -46,6 +47,7 @@ _NODES = {
     "competitor_discovery": competitor_discovery,
     "evidence_validator": evidence_validator,
     "evidence_validator_mock": evidence_validator_mock,
+    "strategic_analyst": strategic_analyst,
     "strategic_analyst_mock": strategic_analyst_mock,
     "report_generator_mock": report_generator_mock,
     "finalize_research": finalize_research,

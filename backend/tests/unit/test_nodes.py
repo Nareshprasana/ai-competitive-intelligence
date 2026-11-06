@@ -11,6 +11,7 @@ from app.graph.nodes import (
     research_planner,
     evidence_validator,
     evidence_validator_mock,
+    strategic_analyst,
     strategic_analyst_mock,
     report_generator_mock,
     finalize_research,
@@ -107,6 +108,43 @@ def test_strategic_analyst_mock():
     assert state.strategic_analysis is not None
     assert len(state.strategic_analysis["opportunities"]) >= 1
     assert len(state.strategic_analysis["threats"]) >= 1
+
+
+def test_strategic_analyst_real_node():
+    state = _base_state()
+    state.company_profile = {
+        "products": ["Acme AI Core", "Acme Vision"],
+        "target_customers": ["Enterprise Analytics"],
+        "geographical_presence": ["North America", "Europe"],
+    }
+    state.competitors = [
+        {
+            "competitor_id": "comp-beta",
+            "company_name": "Beta Labs",
+            "competitor_type": "direct",
+            "products_and_services": ["Beta Platform"],
+            "competitive_strengths": ["Enterprise sales"],
+            "competitive_weaknesses": ["Legacy codebase"],
+        }
+    ]
+    state.evidence = [
+        {
+            "evidence_id": "ev-1",
+            "research_id": "res-1",
+            "claim": "Acme Corp launched Acme AI Core in North America.",
+            "source_url": "https://acme.com/launch",
+            "source_domain": "acme.com",
+            "confidence": 0.9,
+            "verification_status": "verified",
+        }
+    ]
+    state = _run(strategic_analyst, state)
+    assert state.strategic_analysis is not None
+    assert state.strategic_analysis["target_company"] == "Acme Corp"
+    assert len(state.strategic_analysis["competitor_comparisons"]) == 1
+    assert len(state.strategic_analysis["swot_analysis"]["strengths"]) >= 1
+    assert len(state.strategic_analysis["strategic_recommendations"]) >= 1
+    assert state.strategic_analysis["overall_confidence"] > 0.0
 
 
 def test_report_generator_mock():

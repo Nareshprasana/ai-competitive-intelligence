@@ -18,6 +18,7 @@ from app.graph.nodes.finalize_research import finalize_research
 from app.graph.nodes.initialize_research import initialize_research
 from app.graph.nodes.report_generator_mock import report_generator_mock
 from app.graph.nodes.research_planner import research_planner
+from app.graph.nodes.strategic_analyst import strategic_analyst
 from app.graph.nodes.strategic_analyst_mock import strategic_analyst_mock
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "initialize_research",
     "report_generator_mock",
     "research_planner",
+    "strategic_analyst",
     "strategic_analyst_mock",
 ]
