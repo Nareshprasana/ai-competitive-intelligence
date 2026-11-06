@@ -13,6 +13,7 @@ langchain-core==1.6.3
 
 # Database: SQLAlchemy 2.0 async, Alembic migrations, pgvector support
 sqlalchemy[asyncio]==2.0.52
+aiosqlite==0.22.1
 alembic==1.19.1
 pgvector==0.3.2
 asyncpg==0.32.0

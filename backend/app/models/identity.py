@@ -171,7 +171,11 @@ class RefreshToken(Base):
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
-    id: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
     actor_user_id: Mapped[str | None] = mapped_column(
         sa.ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True
     )
