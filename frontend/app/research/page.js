@@ -15,7 +15,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch } from "@/lib/api";
+import { listResearch, getOrganizationId } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 
 export default function ResearchListPage() {
-  const { isAuthenticated, canCreateResearch, currentOrg } = useAuth();
+  const { isAuthenticated, canCreateResearch, currentOrg, currentOrgId } = useAuth();
   const [researchList, setResearchList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -39,15 +39,22 @@ export default function ResearchListPage() {
     if (!isAuthenticated) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const items = await listResearch({ limit: 100 });
-      setResearchList(items || []);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load research projects.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load research projects.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadResearch();

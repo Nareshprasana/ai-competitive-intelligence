@@ -17,7 +17,7 @@ import {
   Search,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch, getResearch } from "@/lib/api";
+import { listResearch, getResearch, getOrganizationId } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,7 @@ const TIME_HORIZON_LABELS = {
 function StrategyContent() {
   const searchParams = useSearchParams();
   const initialResearchId = searchParams?.get("research_id") || "";
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentOrg, currentOrgId } = useAuth();
 
   const [researchList, setResearchList] = useState([]);
   const [selectedId, setSelectedId] = useState(initialResearchId);
@@ -45,28 +45,38 @@ function StrategyContent() {
   // Load available research runs
   useEffect(() => {
     if (!isAuthenticated) return;
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     listResearch({ limit: 50 }).then((items) => {
-      setResearchList(items || []);
-      if (!selectedId && items && items.length > 0) {
-        setSelectedId(items[0].research_id);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+        if (!selectedId && items && items.length > 0) {
+          setSelectedId(items[0].research_id);
+        }
       }
     });
-  }, [isAuthenticated, selectedId]);
+  }, [isAuthenticated, selectedId, currentOrgId, currentOrg]);
 
   // Load research detail
   const loadStrategy = useCallback(async () => {
     if (!selectedId) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const res = await getResearch(selectedId);
-      setCurrentResearch(res?.results || null);
+      if (getOrganizationId() === activeAtStart) {
+        setCurrentResearch(res?.results || null);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load strategic analysis data.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load strategic analysis data.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [selectedId]);
+  }, [selectedId, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadStrategy();

@@ -411,6 +411,13 @@ async def review_evidence(
         )
     if "machine_confidence" not in matched_ev:
         matched_ev["machine_confidence"] = matched_ev.get("confidence")
+    if "machine_explanation" not in matched_ev:
+        matched_ev["machine_explanation"] = (
+            matched_ev.get("explanation")
+            or matched_ev.get("validation_explanation")
+            or matched_ev.get("notes")
+            or ""
+        )
 
     # Update verification status & confidence
     matched_ev["verification_status"] = decision
@@ -425,7 +432,7 @@ async def review_evidence(
         "override_confidence": override_confidence,
     }
 
-    if result.validation_results:
+    if result.validation_results is not None:
         result.validation_results.setdefault("human_review_log", []).append(
             {
                 "evidence_id": evidence_id,
@@ -433,6 +440,7 @@ async def review_evidence(
                 "analyst_notes": analyst_notes,
                 "reviewed_by": reviewer_email,
                 "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "override_confidence": override_confidence,
             }
         )
 
@@ -474,7 +482,68 @@ async def review_evidence(
         "evidence_id": evidence_id,
         "verification_status": decision,
         "confidence": matched_ev.get("confidence"),
+        "machine_verification_status": matched_ev.get("machine_verification_status"),
+        "machine_confidence": matched_ev.get("machine_confidence"),
+        "machine_explanation": matched_ev.get("machine_explanation"),
         "human_review": matched_ev.get("human_review"),
+    }
+
+
+async def get_evidence_reviews(
+    research_id: str, organization_id: str, evidence_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Retrieve audit history and review logs for evidence in a research run."""
+    if db.is_available:
+        result = await _fetch_from_db(research_id, organization_id)
+    else:
+        result = _fallback_store.get(research_id)
+
+    if result is None or result.organization_id != organization_id:
+        raise NotFoundError(
+            f"Research {research_id} not found.",
+            details={"research_id": research_id},
+        )
+
+    log = []
+    if result.validation_results:
+        log = result.validation_results.get("human_review_log", [])
+
+    if evidence_id:
+        evidence_log = [
+            entry for entry in log if entry.get("evidence_id") == evidence_id
+        ]
+        matched = None
+        for ev in result.evidence:
+            if ev.get("evidence_id") == evidence_id:
+                matched = ev
+                break
+        return {
+            "research_id": research_id,
+            "evidence_id": evidence_id,
+            "machine_verification_status": (
+                matched.get("machine_verification_status")
+                if matched
+                else None
+            ),
+            "machine_confidence": (
+                matched.get("machine_confidence") if matched else None
+            ),
+            "machine_explanation": (
+                matched.get("machine_explanation") if matched else None
+            ),
+            "current_verification_status": (
+                matched.get("verification_status") if matched else None
+            ),
+            "current_confidence": (
+                matched.get("confidence") if matched else None
+            ),
+            "reviews": evidence_log,
+        }
+
+    return {
+        "research_id": research_id,
+        "review_count": len(log),
+        "reviews": log,
     }
 
 
@@ -498,5 +567,6 @@ __all__ = [
     "get_research",
     "list_research",
     "review_evidence",
+    "get_evidence_reviews",
     "list_research_ids",
 ]

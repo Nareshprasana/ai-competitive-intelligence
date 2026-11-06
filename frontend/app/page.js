@@ -17,14 +17,14 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch } from "@/lib/api";
+import { listResearch, getOrganizationId } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 
 export default function OverviewPage() {
-  const { isAuthenticated, isLoading: authLoading, currentOrg, canCreateResearch } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, currentOrg, currentOrgId, canCreateResearch } = useAuth();
   const [researchList, setResearchList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,15 +33,22 @@ export default function OverviewPage() {
     if (!isAuthenticated) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const items = await listResearch({ limit: 50 });
-      setResearchList(items || []);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load dashboard metrics.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load dashboard metrics.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadData();

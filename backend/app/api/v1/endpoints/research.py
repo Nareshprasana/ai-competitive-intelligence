@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.core.logging import get_logger
 from app.schemas.research import ResearchRequest, ResearchResponse, ResearchStatusResponse
 from app.services.research_service import (
+    get_evidence_reviews,
     get_research,
     list_research,
     review_evidence,
@@ -30,7 +31,7 @@ router = APIRouter()
 class HumanEvidenceReviewRequest(BaseModel):
     decision: str = Field(
         ...,
-        description="Review decision: verified, partially_verified, unverified, contradicted, rejected",
+        description="Review decision: approved, rejected, flagged, verified, partially_verified, unverified, contradicted",
     )
     analyst_notes: Optional[str] = Field(
         None, max_length=2000, description="Analyst rationale and evidence notes"
@@ -130,6 +131,42 @@ async def review_evidence_endpoint(
         analyst_notes=request.analyst_notes,
         override_confidence=request.override_confidence,
         reviewer_email=context.user.email,
+    )
+
+
+@router.get(
+    "/{research_id}/evidence/{evidence_id}/reviews",
+    summary="Get human review audit history for a specific evidence claim",
+)
+async def get_evidence_reviews_endpoint(
+    context: OrganizationContext = Depends(
+        require_permission(Permission.VIEW_RESEARCH)
+    ),
+    research_id: str = Path(..., min_length=1, description="Research run identifier"),
+    evidence_id: str = Path(..., min_length=1, description="Evidence claim identifier"),
+) -> Dict[str, Any]:
+    """Retrieve audit history and review decisions for a specific evidence item."""
+    return await get_evidence_reviews(
+        research_id=research_id,
+        organization_id=context.organization_id,
+        evidence_id=evidence_id,
+    )
+
+
+@router.get(
+    "/{research_id}/evidence/reviews",
+    summary="Get all human review audit logs for a research run",
+)
+async def list_all_evidence_reviews_endpoint(
+    context: OrganizationContext = Depends(
+        require_permission(Permission.VIEW_RESEARCH)
+    ),
+    research_id: str = Path(..., min_length=1, description="Research run identifier"),
+) -> Dict[str, Any]:
+    """Retrieve all human review audit entries for a research run."""
+    return await get_evidence_reviews(
+        research_id=research_id,
+        organization_id=context.organization_id,
     )
 
 

@@ -47,9 +47,11 @@ export default function ResearchDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const pollTimerRef = useRef(null);
+  const isFetchingRef = useRef(false);
 
   const fetchDetail = useCallback(async () => {
-    if (!researchId) return;
+    if (!researchId || isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const res = await getResearch(researchId);
       setData(res?.results || null);
@@ -68,6 +70,7 @@ export default function ResearchDetailPage() {
         pollTimerRef.current = null;
       }
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
   }, [researchId]);

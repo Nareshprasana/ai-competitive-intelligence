@@ -23,6 +23,7 @@ import {
   getReport,
   downloadReportPdf,
   downloadReportMarkdown,
+  getOrganizationId,
 } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ import { Modal } from "@/components/ui/modal";
 function ReportsContent() {
   const searchParams = useSearchParams();
   const initialResearchId = searchParams?.get("research_id") || "";
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentOrg, currentOrgId } = useAuth();
 
   const [researchList, setResearchList] = useState([]);
   const [selectedId, setSelectedId] = useState(initialResearchId);
@@ -50,28 +51,38 @@ function ReportsContent() {
   // Load available research runs
   useEffect(() => {
     if (!isAuthenticated) return;
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     listResearch({ limit: 50 }).then((items) => {
-      setResearchList(items || []);
-      if (!selectedId && items && items.length > 0) {
-        setSelectedId(items[0].research_id);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+        if (!selectedId && items && items.length > 0) {
+          setSelectedId(items[0].research_id);
+        }
       }
     });
-  }, [isAuthenticated, selectedId]);
+  }, [isAuthenticated, selectedId, currentOrgId, currentOrg]);
 
   // Load report data
   const loadReport = useCallback(async () => {
     if (!selectedId) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const data = await getReport(selectedId);
-      setReportData(data);
+      if (getOrganizationId() === activeAtStart) {
+        setReportData(data);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load strategic intelligence report.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load strategic intelligence report.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [selectedId]);
+  }, [selectedId, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadReport();

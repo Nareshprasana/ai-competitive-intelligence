@@ -16,7 +16,7 @@ import {
   Search,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch, getResearch } from "@/lib/api";
+import { listResearch, getResearch, getOrganizationId, safeUrl } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,7 @@ import { Alert } from "@/components/ui/alert";
 function CompaniesContent() {
   const searchParams = useSearchParams();
   const initialResearchId = searchParams?.get("research_id") || "";
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentOrg, currentOrgId } = useAuth();
 
   const [researchList, setResearchList] = useState([]);
   const [selectedId, setSelectedId] = useState(initialResearchId);
@@ -36,28 +36,38 @@ function CompaniesContent() {
   // Load available research runs
   useEffect(() => {
     if (!isAuthenticated) return;
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     listResearch({ limit: 50 }).then((items) => {
-      setResearchList(items || []);
-      if (!selectedId && items && items.length > 0) {
-        setSelectedId(items[0].research_id);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+        if (!selectedId && items && items.length > 0) {
+          setSelectedId(items[0].research_id);
+        }
       }
     });
-  }, [isAuthenticated, selectedId]);
+  }, [isAuthenticated, selectedId, currentOrgId, currentOrg]);
 
   // Load detail for selected research
   const loadProfile = useCallback(async () => {
     if (!selectedId) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const res = await getResearch(selectedId);
-      setCurrentResearch(res?.results || null);
+      if (getOrganizationId() === activeAtStart) {
+        setCurrentResearch(res?.results || null);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load company profile.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load company profile.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [selectedId]);
+  }, [selectedId, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadProfile();
@@ -144,7 +154,7 @@ function CompaniesContent() {
                   <div className="flex items-center gap-1.5 text-xs text-primary pt-1">
                     <Globe className="h-3.5 w-3.5" />
                     <a
-                      href={profile.website}
+                      href={safeUrl(profile.website)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:underline flex items-center gap-1"
@@ -255,7 +265,7 @@ function CompaniesContent() {
                     {sources.map((src, i) => (
                       <li key={i} className="truncate">
                         <a
-                          href={src}
+                          href={safeUrl(src)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-primary hover:underline flex items-center gap-1.5"

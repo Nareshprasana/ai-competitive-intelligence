@@ -16,7 +16,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch, getResearch } from "@/lib/api";
+import { listResearch, getResearch, getOrganizationId, safeUrl } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ const TYPE_BADGES = {
 function CompetitorsContent() {
   const searchParams = useSearchParams();
   const initialResearchId = searchParams?.get("research_id") || "";
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentOrg, currentOrgId } = useAuth();
 
   const [researchList, setResearchList] = useState([]);
   const [selectedId, setSelectedId] = useState(initialResearchId);
@@ -48,28 +48,38 @@ function CompetitorsContent() {
   // Load available research runs
   useEffect(() => {
     if (!isAuthenticated) return;
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     listResearch({ limit: 50 }).then((items) => {
-      setResearchList(items || []);
-      if (!selectedId && items && items.length > 0) {
-        setSelectedId(items[0].research_id);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+        if (!selectedId && items && items.length > 0) {
+          setSelectedId(items[0].research_id);
+        }
       }
     });
-  }, [isAuthenticated, selectedId]);
+  }, [isAuthenticated, selectedId, currentOrgId, currentOrg]);
 
   // Load research detail
   const loadCompetitors = useCallback(async () => {
     if (!selectedId) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const res = await getResearch(selectedId);
-      setCurrentResearch(res?.results || null);
+      if (getOrganizationId() === activeAtStart) {
+        setCurrentResearch(res?.results || null);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load competitor data.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load competitor matrix.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [selectedId]);
+  }, [selectedId, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadCompetitors();
@@ -173,7 +183,7 @@ function CompetitorsContent() {
                       </CardTitle>
                       {comp.website && (
                         <a
-                          href={comp.website}
+                          href={safeUrl(comp.website)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[11px] text-primary hover:underline flex items-center gap-1 mt-0.5"
@@ -270,7 +280,7 @@ function CompetitorsContent() {
                         <span className="truncate max-w-sm">{ev.source_domain || ev.source_title}</span>
                         {ev.source_url && (
                           <a
-                            href={ev.source_url}
+                            href={safeUrl(ev.source_url)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-primary hover:underline flex items-center gap-1"

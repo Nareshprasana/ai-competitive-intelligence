@@ -18,6 +18,8 @@ import {
   getReport,
   downloadReportPdf,
   downloadReportMarkdown,
+  getEvidenceReviews,
+  safeUrl,
   health,
 } from "../lib/api.js";
 
@@ -218,5 +220,97 @@ describe("ACIS Frontend Centralized API Client", () => {
     await logout();
     assert.equal(getAccessToken(), null);
     assert.equal(getOrganizationId(), null);
+  });
+
+  test("refreshAccessToken coordinates concurrent requests into a single fetch call", async () => {
+    let callCount = 0;
+    // Mock window and localStorage
+    global.window = {
+      localStorage: {
+        getItem: (k) => (k === "acis-csrf-token" ? "csrf-secret-123" : null),
+        setItem: () => {},
+        removeItem: () => {},
+      },
+    };
+
+    global.fetch = mock.fn(async (url) => {
+      if (url.includes("/api/v1/auth/refresh")) {
+        callCount++;
+        // Simulate a small delay
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: "new-coordinated-token",
+            expires_in: 600,
+            csrf_token: "next-csrf-token",
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    // Fire 3 concurrent refresh calls simultaneously
+    const [t1, t2, t3] = await Promise.all([
+      refreshAccessToken(),
+      refreshAccessToken(),
+      refreshAccessToken(),
+    ]);
+
+    assert.equal(t1, "new-coordinated-token");
+    assert.equal(t2, "new-coordinated-token");
+    assert.equal(t3, "new-coordinated-token");
+    // Strictly 1 single request was sent to the server, preventing token reuse session invalidation
+    assert.equal(callCount, 1);
+  });
+
+  test("getEvidenceReviews retrieves audit logs and preserved machine validation", async () => {
+    setAccessToken("test-token");
+    setOrganizationId("org-test");
+
+    global.fetch = mock.fn(async (url) => {
+      assert.ok(url.includes("/evidence/ev-123/reviews"));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          research_id: "res-1",
+          evidence_id: "ev-123",
+          machine_verification_status: "verified",
+          machine_confidence: 0.92,
+          machine_explanation: "Direct SEC filing citation.",
+          current_verification_status: "approved",
+          current_confidence: 0.95,
+          reviews: [
+            {
+              evidence_id: "ev-123",
+              decision: "approved",
+              analyst_notes: "Audited and verified by Lead Analyst.",
+              reviewed_by: "lead@enterprise.com",
+              reviewed_at: "2026-11-06T12:00:00Z",
+            },
+          ],
+        }),
+      };
+    });
+
+    const data = await getEvidenceReviews("res-1", "ev-123");
+    assert.equal(data.evidence_id, "ev-123");
+    assert.equal(data.machine_verification_status, "verified");
+    assert.equal(data.current_verification_status, "approved");
+    assert.equal(data.reviews.length, 1);
+    assert.equal(data.reviews[0].decision, "approved");
+  });
+
+  test("safeUrl prevents XSS by neutralizing javascript:, data:, and vbscript: URIs", () => {
+    assert.equal(safeUrl("javascript:alert(1)"), "#");
+    assert.equal(safeUrl("JAVASCRIPT:/*malicious*/window.location='bad.com'"), "#");
+    assert.equal(safeUrl("data:text/html,<script>alert(1)</script>"), "#");
+    assert.equal(safeUrl("vbscript:msgbox(1)"), "#");
+    assert.equal(safeUrl("https://example.com/company-profile"), "https://example.com/company-profile");
+    assert.equal(safeUrl("/research/123"), "/research/123");
+    assert.equal(safeUrl(null), "#");
+    assert.equal(safeUrl(undefined), "#");
   });
 });

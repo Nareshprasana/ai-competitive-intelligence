@@ -155,19 +155,77 @@ async def test_review_evidence_endpoint():
 
         get_res = await client.get(f"/api/v1/research/{rid}")
         results = get_res.json()["results"]
-        ev_items = results.get("validated_evidence", {}).get("evidence_items", [])
+        ev_items = results.get("evidence", [])
         if ev_items:
             ev_id = ev_items[0]["evidence_id"]
+            orig_status = ev_items[0].get("verification_status")
+            orig_conf = ev_items[0].get("confidence")
+
+            # 1. Submit human approval
             review_resp = await client.post(
                 f"/api/v1/research/{rid}/evidence/{ev_id}/review",
                 json={
-                    "status": "rejected",
-                    "notes": "Rejected by senior reviewer due to stale data source",
+                    "decision": "approved",
+                    "analyst_notes": "Audited and confirmed by Lead Analyst.",
+                    "override_confidence": 0.98,
                 },
             )
             assert review_resp.status_code == 200
             review_data = review_resp.json()
             assert review_data["evidence_id"] == ev_id
-            assert review_data["status"] == "rejected"
-            assert "senior reviewer" in review_data["notes"]
-            assert review_data["reviewed_by"] == "test-user"
+            assert review_data["verification_status"] == "approved"
+            assert review_data["machine_verification_status"] == orig_status
+            assert review_data["machine_confidence"] == orig_conf
+            assert review_data["human_review"]["decision"] == "approved"
+            assert review_data["human_review"]["reviewed_by"] == "test@example.com"
+
+            # 2. Retrieve review audit history for this evidence item
+            audit_resp = await client.get(
+                f"/api/v1/research/{rid}/evidence/{ev_id}/reviews"
+            )
+            assert audit_resp.status_code == 200
+            audit_data = audit_resp.json()
+            assert audit_data["evidence_id"] == ev_id
+            assert audit_data["machine_verification_status"] == orig_status
+            assert len(audit_data["reviews"]) >= 1
+            assert audit_data["reviews"][-1]["decision"] == "approved"
+
+            # 3. Retrieve all review logs for research run
+            all_audit = await client.get(
+                f"/api/v1/research/{rid}/evidence/reviews"
+            )
+            assert all_audit.status_code == 200
+            assert all_audit.json()["review_count"] >= 1
+
+
+async def test_report_endpoints_fallback_and_artifacts():
+    async with await _client() as client:
+        post = await client.post(
+            "/api/v1/research",
+            json={
+                "company_name": "ReportArtifacts Co",
+                "industry": "Enterprise Security",
+                "research_question": "Report artifact validation?",
+            },
+        )
+        assert post.status_code == 201
+        rid = post.json()["research_id"]
+
+        # Structured Report JSON
+        r_json = await client.get(f"/api/v1/research/{rid}/report")
+        assert r_json.status_code == 200
+        data = r_json.json()
+        assert "company" in data or "sections" in data or "metadata" in data
+
+        # PDF Artifact Download
+        r_pdf = await client.get(f"/api/v1/research/{rid}/report/pdf")
+        assert r_pdf.status_code == 200
+        assert r_pdf.headers["content-type"] == "application/pdf"
+        assert "attachment;" in r_pdf.headers["content-disposition"]
+        assert r_pdf.content.startswith(b"%PDF-")
+
+        # Markdown Export
+        r_md = await client.get(f"/api/v1/research/{rid}/report/markdown")
+        assert r_md.status_code == 200
+        assert "text/markdown" in r_md.headers["content-type"]
+        assert "Competitive Intelligence Report" in r_md.text

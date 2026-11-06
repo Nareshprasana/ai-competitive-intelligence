@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LogOut, Building, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 export function Header() {
+  const router = useRouter();
   const {
     currentOrg,
     organizations,
@@ -17,6 +19,11 @@ export function Header() {
     logout,
     isBackendHealthy,
   } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/login");
+  };
 
   return (
     <header className="sticky top-0 z-20 h-16 border-b border-input bg-card/90 backdrop-blur-md px-6 flex items-center justify-between">
@@ -73,7 +80,7 @@ export function Header() {
             <Button
               variant="outline"
               className="h-8 px-2.5 text-xs gap-1.5"
-              onClick={logout}
+              onClick={handleLogout}
               title="Sign Out"
             >
               <LogOut className="h-3.5 w-3.5" />

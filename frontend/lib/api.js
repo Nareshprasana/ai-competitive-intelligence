@@ -12,6 +12,7 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000
 let accessToken = null;
 let organizationId = null;
 let currentUser = null;
+let refreshPromise = null;
 
 function storeCsrfToken(token) {
   if (typeof window !== "undefined" && token) {
@@ -31,6 +32,15 @@ function errorMessage(error, fallback) {
     return error.detail || error.message || fallback;
   }
   return fallback;
+}
+
+export function safeUrl(url) {
+  if (!url || typeof url !== "string") return "#";
+  const trimmed = url.trim();
+  if (/^(javascript|data|vbscript):/i.test(trimmed)) {
+    return "#";
+  }
+  return trimmed;
 }
 
 export function setAccessToken(token) {
@@ -88,20 +98,36 @@ export async function refreshAccessToken() {
   if (typeof window === "undefined") return null;
   const csrfToken = getStoredCsrfToken();
   if (!csrfToken) return null;
-  const response = await fetch(`${API_URL}/api/v1/auth/refresh`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "X-CSRF-Token": csrfToken },
-  });
-  if (!response.ok) {
-    accessToken = null;
-    return null;
+
+  if (refreshPromise) {
+    return refreshPromise;
   }
-  const data = await response.json().catch(() => ({}));
-  accessToken = data.access_token;
-  if (data.user) currentUser = data.user;
-  storeCsrfToken(data.csrf_token);
-  return accessToken;
+
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+      if (!response.ok) {
+        accessToken = null;
+        return null;
+      }
+      const data = await response.json().catch(() => ({}));
+      accessToken = data.access_token;
+      if (data.user) currentUser = data.user;
+      storeCsrfToken(data.csrf_token);
+      return accessToken;
+    } catch {
+      accessToken = null;
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export async function logout() {
@@ -256,6 +282,13 @@ export async function reviewEvidence(researchId, evidenceId, { decision, analyst
   );
 }
 
+export async function getEvidenceReviews(researchId, evidenceId) {
+  const path = evidenceId
+    ? `/api/v1/research/${encodeURIComponent(researchId)}/evidence/${encodeURIComponent(evidenceId)}/reviews`
+    : `/api/v1/research/${encodeURIComponent(researchId)}/evidence/reviews`;
+  return authenticatedRequest(path, { cache: "no-store" });
+}
+
 /* =============================================================================
    Strategic Report APIs
 ============================================================================= */
@@ -268,6 +301,7 @@ export async function getReport(researchId) {
 }
 
 export async function downloadReportPdf(researchId) {
+  const safeId = String(researchId).replace(/[^a-zA-Z0-9_-]/g, "");
   const blob = await authenticatedRequest(
     `/api/v1/research/${encodeURIComponent(researchId)}/report/pdf`,
     { asBlob: true, cache: "no-store" }
@@ -276,30 +310,43 @@ export async function downloadReportPdf(researchId) {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `acis-report-${researchId}.pdf`);
+    link.setAttribute("download", `acis-report-${safeId}.pdf`);
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
+    setTimeout(() => {
+      try {
+        window.URL.revokeObjectURL(url);
+      } catch {
+        // ignore cleanup error
+      }
+    }, 100);
   }
   return blob;
 }
 
 export async function downloadReportMarkdown(researchId) {
+  const safeId = String(researchId).replace(/[^a-zA-Z0-9_-]/g, "");
   const text = await authenticatedRequest(
     `/api/v1/research/${encodeURIComponent(researchId)}/report/markdown`,
     { asText: true, cache: "no-store" }
   );
   if (typeof window !== "undefined") {
-    const blob = new Blob([text], { type: "text/markdown" });
+    const blob = new Blob([text], { type: "text/markdown; charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `acis-report-${researchId}.md`);
+    link.setAttribute("download", `acis-report-${safeId}.md`);
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
+    setTimeout(() => {
+      try {
+        window.URL.revokeObjectURL(url);
+      } catch {
+        // ignore cleanup error
+      }
+    }, 100);
   }
   return text;
 }

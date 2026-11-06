@@ -19,7 +19,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { listResearch, getResearch, reviewEvidence } from "@/lib/api";
+import { listResearch, getResearch, reviewEvidence, getOrganizationId, safeUrl } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,9 +29,11 @@ import { Alert } from "@/components/ui/alert";
 import { Modal } from "@/components/ui/modal";
 
 const STATUS_BADGES = {
+  approved: { variant: "success", label: "Approved" },
   verified: { variant: "success", label: "Verified" },
   partially_verified: { variant: "info", label: "Partially Verified" },
   unverified: { variant: "outline", label: "Unverified" },
+  flagged: { variant: "warning", label: "Flagged" },
   contradicted: { variant: "danger", label: "Contradicted" },
   stale: { variant: "warning", label: "Stale Data" },
   rejected: { variant: "danger", label: "Rejected" },
@@ -40,7 +42,7 @@ const STATUS_BADGES = {
 function EvidenceContent() {
   const searchParams = useSearchParams();
   const initialResearchId = searchParams?.get("research_id") || "";
-  const { isAuthenticated, canManageEvidence } = useAuth();
+  const { isAuthenticated, canManageEvidence, currentOrg, currentOrgId } = useAuth();
 
   const [researchList, setResearchList] = useState([]);
   const [selectedId, setSelectedId] = useState(initialResearchId);
@@ -54,7 +56,7 @@ function EvidenceContent() {
   const [activeEvidence, setActiveEvidence] = useState(null);
 
   // Review action form state
-  const [reviewDecision, setReviewDecision] = useState("verified");
+  const [reviewDecision, setReviewDecision] = useState("approved");
   const [reviewNotes, setReviewNotes] = useState("");
   const [reviewConfidence, setReviewConfidence] = useState(0.85);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -63,28 +65,38 @@ function EvidenceContent() {
   // Load available research runs
   useEffect(() => {
     if (!isAuthenticated) return;
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     listResearch({ limit: 50 }).then((items) => {
-      setResearchList(items || []);
-      if (!selectedId && items && items.length > 0) {
-        setSelectedId(items[0].research_id);
+      if (getOrganizationId() === activeAtStart) {
+        setResearchList(items || []);
+        if (!selectedId && items && items.length > 0) {
+          setSelectedId(items[0].research_id);
+        }
       }
     });
-  }, [isAuthenticated, selectedId]);
+  }, [isAuthenticated, selectedId, currentOrgId, currentOrg]);
 
   // Load research detail
   const loadResearchDetail = useCallback(async () => {
     if (!selectedId) return;
     setLoading(true);
     setError(null);
+    const activeAtStart = currentOrgId || currentOrg?.organization_id;
     try {
       const res = await getResearch(selectedId);
-      setCurrentResearch(res?.results || null);
+      if (getOrganizationId() === activeAtStart) {
+        setCurrentResearch(res?.results || null);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load evidence records.");
+      if (getOrganizationId() === activeAtStart) {
+        setError(err.message || "Failed to load evidence records.");
+      }
     } finally {
-      setLoading(false);
+      if (getOrganizationId() === activeAtStart) {
+        setLoading(false);
+      }
     }
-  }, [selectedId]);
+  }, [selectedId, currentOrgId, currentOrg]);
 
   useEffect(() => {
     loadResearchDetail();
@@ -340,7 +352,7 @@ function EvidenceContent() {
                           <div className="font-medium text-foreground">{ev.source_domain || "Web Source"}</div>
                           {ev.source_url && (
                             <a
-                              href={ev.source_url}
+                              href={safeUrl(ev.source_url)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[11px] text-primary hover:underline flex items-center gap-1"
@@ -421,7 +433,7 @@ function EvidenceContent() {
                 </span>
                 {activeEvidence.source_url && (
                   <a
-                    href={activeEvidence.source_url}
+                    href={safeUrl(activeEvidence.source_url)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline flex items-center gap-1"
@@ -433,36 +445,71 @@ function EvidenceContent() {
             </div>
 
             {/* Machine Validation Status Preservation */}
-            <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-md border text-[11px]">
+            <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-md border text-[11px] bg-muted/20">
               <div>
-                <span className="text-muted-foreground block">Machine Status:</span>
-                <span className="font-medium text-foreground">
+                <span className="text-muted-foreground block font-medium">Machine Validation Status:</span>
+                <span className="font-semibold text-foreground">
                   {activeEvidence.machine_verification_status || activeEvidence.verification_status}
                 </span>
               </div>
               <div>
-                <span className="text-muted-foreground block">Machine Confidence:</span>
-                <span className="font-medium text-foreground">
-                  {Math.round((activeEvidence.machine_confidence || activeEvidence.confidence || 0) * 100)}%
+                <span className="text-muted-foreground block font-medium">Machine Confidence Score:</span>
+                <span className="font-semibold text-foreground">
+                  {Math.round((activeEvidence.machine_confidence ?? activeEvidence.confidence ?? 0) * 100)}%
                 </span>
               </div>
+              {(activeEvidence.machine_explanation || activeEvidence.explanation) && (
+                <div className="sm:col-span-2 pt-1 border-t text-muted-foreground">
+                  <span className="font-medium text-foreground block">Machine Explanation:</span>
+                  {activeEvidence.machine_explanation || activeEvidence.explanation}
+                </div>
+              )}
             </div>
+
+            {/* Human Review Audit History (if already reviewed) */}
+            {activeEvidence.human_review && (
+              <div className="p-3 rounded-md border text-[11px] bg-amber-500/5 border-amber-500/20 space-y-1">
+                <span className="font-semibold text-foreground block">Recorded Human Review:</span>
+                <div className="grid sm:grid-cols-2 gap-2 text-muted-foreground">
+                  <div>
+                    <span className="font-medium text-foreground">Decision: </span>
+                    <Badge variant={STATUS_BADGES[activeEvidence.human_review.decision]?.variant || "secondary"} className="text-[10px]">
+                      {STATUS_BADGES[activeEvidence.human_review.decision]?.label || activeEvidence.human_review.decision}
+                    </Badge>
+                  </div>
+                  <div>
+                    <span className="font-medium text-foreground">Reviewer: </span>
+                    {activeEvidence.human_review.reviewed_by}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="font-medium text-foreground">Timestamp: </span>
+                    {new Date(activeEvidence.human_review.reviewed_at).toLocaleString()}
+                  </div>
+                  {activeEvidence.human_review.analyst_notes && (
+                    <div className="sm:col-span-2">
+                      <span className="font-medium text-foreground">Notes: </span>
+                      &ldquo;{activeEvidence.human_review.analyst_notes}&rdquo;
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Analyst Decision Form */}
             {canManageEvidence ? (
               <form onSubmit={handleSubmitReview} className="space-y-3 pt-2 border-t">
                 <div className="space-y-1.5">
-                  <label className="font-semibold text-foreground block">Analyst Decision</label>
+                  <label className="font-semibold text-foreground block">Human Review Decision</label>
                   <select
                     className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
                     value={reviewDecision}
                     onChange={(e) => setReviewDecision(e.target.value)}
                   >
-                    <option value="verified">Verified (Directly Supported)</option>
+                    <option value="approved">Approved (Verified by Analyst)</option>
+                    <option value="rejected">Rejected (Invalid / False Claim)</option>
+                    <option value="flagged">Flagged (Contradicted / Requires Further Review)</option>
                     <option value="partially_verified">Partially Verified (Single Source)</option>
                     <option value="unverified">Unverified (Insufficient Evidence)</option>
-                    <option value="contradicted">Contradicted (Conflicting Evidence)</option>
-                    <option value="rejected">Rejected / Invalid Claim</option>
                   </select>
                 </div>
 
