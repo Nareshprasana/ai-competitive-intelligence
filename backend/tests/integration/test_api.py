@@ -114,3 +114,60 @@ async def test_get_research_not_found():
     async with await _client() as client:
         r = await client.get("/api/v1/research/no-such-id")
     assert r.status_code == 404
+
+
+async def test_list_research_empty_and_populated():
+    async with await _client() as client:
+        r = await client.get("/api/v1/research")
+        assert r.status_code == 200
+        items = r.json()
+        assert isinstance(items, list)
+
+        post = await client.post(
+            "/api/v1/research",
+            json={
+                "company_name": "ListTest Co",
+                "industry": "Cloud",
+                "research_question": "What is their competitive strategy?",
+            },
+        )
+        assert post.status_code == 201
+        created_id = post.json()["research_id"]
+
+        r2 = await client.get("/api/v1/research")
+        assert r2.status_code == 200
+        ids = [item["research_id"] for item in r2.json()]
+        assert created_id in ids
+
+
+async def test_review_evidence_endpoint():
+    async with await _client() as client:
+        post = await client.post(
+            "/api/v1/research",
+            json={
+                "company_name": "EvidenceReview Co",
+                "industry": "FinTech",
+                "research_question": "Evidence review testing?",
+            },
+        )
+        assert post.status_code == 201
+        rid = post.json()["research_id"]
+
+        get_res = await client.get(f"/api/v1/research/{rid}")
+        results = get_res.json()["results"]
+        ev_items = results.get("validated_evidence", {}).get("evidence_items", [])
+        if ev_items:
+            ev_id = ev_items[0]["evidence_id"]
+            review_resp = await client.post(
+                f"/api/v1/research/{rid}/evidence/{ev_id}/review",
+                json={
+                    "status": "rejected",
+                    "notes": "Rejected by senior reviewer due to stale data source",
+                },
+            )
+            assert review_resp.status_code == 200
+            review_data = review_resp.json()
+            assert review_data["evidence_id"] == ev_id
+            assert review_data["status"] == "rejected"
+            assert "senior reviewer" in review_data["notes"]
+            assert review_data["reviewed_by"] == "test-user"

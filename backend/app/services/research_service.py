@@ -300,6 +300,184 @@ async def get_research(research_id: str, organization_id: Optional[str] = None) 
     )
 
 
+async def list_research(
+    organization_id: Optional[str] = None,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """List research runs for one organization (newest first)."""
+    organization_id = organization_id or _settings_default_organization_id()
+    if db.is_available:
+        async for session in db.get_session():
+            repo = await _get_repository(session)
+            rows = await repo.list_by_organization(
+                organization_id, limit=limit, offset=offset
+            )
+            return [
+                {
+                    "research_id": r["research_id"],
+                    "organization_id": r["organization_id"],
+                    "company_name": r["company_name"],
+                    "industry": r["industry"],
+                    "research_question": r["research_question"],
+                    "status": r["status"],
+                    "review_status": r.get("review_status") or "pending",
+                    "created_at": r.get("created_at"),
+                    "updated_at": r.get("updated_at"),
+                    "competitors_count": len(
+                        (r.get("results") or {}).get("competitors") or []
+                    ),
+                    "evidence_count": len(
+                        (r.get("results") or {}).get("evidence") or []
+                    ),
+                    "has_report": bool((r.get("results") or {}).get("final_report")),
+                }
+                for r in rows
+            ]
+
+    items = []
+    for r in _fallback_store.values():
+        if (
+            r.organization_id == organization_id
+            or organization_id == _settings_default_organization_id()
+        ):
+            items.append(
+                {
+                    "research_id": r.research_id,
+                    "organization_id": r.organization_id,
+                    "company_name": r.company_name,
+                    "industry": r.industry,
+                    "research_question": r.research_question,
+                    "status": r.status,
+                    "review_status": r.review_status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "competitors_count": len(r.competitors or []),
+                    "evidence_count": len(r.evidence or []),
+                    "has_report": bool(r.final_report),
+                }
+            )
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return items[offset : offset + limit]
+
+
+async def review_evidence(
+    *,
+    research_id: str,
+    evidence_id: str,
+    organization_id: str,
+    decision: str,
+    analyst_notes: Optional[str] = None,
+    override_confidence: Optional[float] = None,
+    reviewer_email: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record an analyst human review decision on an evidence claim."""
+    organization_id = organization_id or _settings_default_organization_id()
+    result: Optional[ResearchResult] = None
+    if db.is_available:
+        result = await _fetch_from_db(research_id, organization_id)
+    else:
+        result = _fallback_store.get(research_id)
+
+    if result is None:
+        raise NotFoundError(
+            f"Research {research_id} not found.",
+            details={"research_id": research_id},
+        )
+
+    matched_ev = None
+    for ev in result.evidence:
+        if ev.get("evidence_id") == evidence_id:
+            matched_ev = ev
+            break
+
+    if not matched_ev and result.validation_results:
+        for cr in result.validation_results.get("claim_results", []):
+            if cr.get("claim_id") == evidence_id:
+                matched_ev = cr
+                break
+
+    if not matched_ev:
+        raise NotFoundError(
+            f"Evidence {evidence_id} not found in research {research_id}.",
+            details={"evidence_id": evidence_id},
+        )
+
+    # Preserve machine validation results
+    if "machine_verification_status" not in matched_ev:
+        matched_ev["machine_verification_status"] = matched_ev.get(
+            "verification_status"
+        )
+    if "machine_confidence" not in matched_ev:
+        matched_ev["machine_confidence"] = matched_ev.get("confidence")
+
+    # Update verification status & confidence
+    matched_ev["verification_status"] = decision
+    if override_confidence is not None:
+        matched_ev["confidence"] = override_confidence
+
+    matched_ev["human_review"] = {
+        "decision": decision,
+        "analyst_notes": analyst_notes,
+        "reviewed_by": reviewer_email,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "override_confidence": override_confidence,
+    }
+
+    if result.validation_results:
+        result.validation_results.setdefault("human_review_log", []).append(
+            {
+                "evidence_id": evidence_id,
+                "decision": decision,
+                "analyst_notes": analyst_notes,
+                "reviewed_by": reviewer_email,
+                "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    if db.is_available:
+        try:
+            async for session in db.get_session():
+                from app.repositories.competitor import (
+                    CompetitorEvidenceRepository,
+                )
+                from app.repositories.evidence import EvidenceRepository
+
+                ev_repo = EvidenceRepository(session)
+                comp_ev_repo = CompetitorEvidenceRepository(session)
+                await ev_repo.update_status(
+                    evidence_id,
+                    organization_id,
+                    verification_status=decision,
+                    confidence=override_confidence,
+                )
+                await comp_ev_repo.update_status(
+                    evidence_id,
+                    organization_id,
+                    verification_status=decision,
+                    confidence=override_confidence,
+                )
+                break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Evidence status repository update failed evidence_id=%s: %s",
+                evidence_id,
+                exc,
+            )
+        await _update_persisted_result(result)
+    else:
+        _fallback_store[research_id] = result
+
+    return {
+        "status": "success",
+        "evidence_id": evidence_id,
+        "verification_status": decision,
+        "confidence": matched_ev.get("confidence"),
+        "human_review": matched_ev.get("human_review"),
+    }
+
+
 def list_research_ids() -> List[str]:
     """Return known research IDs (fallback store when no database)."""
     if db.is_available:
@@ -315,4 +493,10 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-__all__ = ["run_research", "get_research", "list_research_ids"]
+__all__ = [
+    "run_research",
+    "get_research",
+    "list_research",
+    "review_evidence",
+    "list_research_ids",
+]
