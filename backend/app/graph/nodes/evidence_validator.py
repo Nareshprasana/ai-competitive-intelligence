@@ -6,8 +6,9 @@ credibility, assesses evidence freshness by category, detects cross-source
 contradictions, scores confidence deterministically, and produces structured,
 traceable validation results and a human review queue.
 
-If the database is available, updated verification statuses and confidence scores
-are persisted to PostgreSQL/SQLite with tenant isolation.
+If the database is available, updated verification statuses, confidence scores,
+full validation summary, and human review items are durably persisted to
+storage with tenant isolation.
 """
 
 from typing import Optional
@@ -24,16 +25,20 @@ logger = get_logger("app.graph.nodes.evidence_validator")
 
 async def _persist_evidence_validation(
     *,
+    research_id: str,
     organization_id: str,
     evidence: list,
+    validation_results: dict,
 ) -> None:
-    """Persist updated evidence verification statuses and confidence to storage."""
-    from app.repositories.evidence import EvidenceRepository
+    """Persist updated evidence verification statuses, confidence, and full validation results."""
     from app.repositories.competitor import CompetitorEvidenceRepository
+    from app.repositories.evidence import EvidenceRepository
+    from app.repositories.research import ResearchRepository
 
     async for session in db.get_session():
         evidence_repo = EvidenceRepository(session)
         competitor_evidence_repo = CompetitorEvidenceRepository(session)
+        research_repo = ResearchRepository(session)
 
         for ev in evidence:
             ev_id = ev.get("evidence_id")
@@ -57,6 +62,30 @@ async def _persist_evidence_validation(
                     verification_status=status,
                     confidence=conf,
                 )
+
+        # Durably persist full validation summary and human review queue in research run
+        research_row = await research_repo.get_by_id(research_id, organization_id)
+        if research_row:
+            existing_results = dict(research_row.get("results") or {})
+            existing_results["validation_results"] = validation_results
+            existing_results["evidence"] = evidence
+
+            review_queue = validation_results.get("human_review_queue") or []
+            contradictions = validation_results.get("contradictions") or []
+            new_review_status = (
+                "requires_review"
+                if (len(review_queue) > 0 or len(contradictions) > 0)
+                else (research_row.get("review_status") or "reviewed")
+            )
+
+            await research_repo.update_status(
+                research_id=research_id,
+                organization_id=organization_id,
+                status=research_row["status"],
+                review_status=new_review_status,
+                results=existing_results,
+            )
+
         await session.commit()
         break
 
@@ -88,8 +117,10 @@ async def _evidence_validator(state: ResearchState) -> dict:
         if db.is_available:
             try:
                 await _persist_evidence_validation(
+                    research_id=research_id,
                     organization_id=organization_id,
                     evidence=updated_evidence,
+                    validation_results=validation_results,
                 )
                 persistence_status = "completed"
             except Exception as exc:  # noqa: BLE001 - log but don't fail graph

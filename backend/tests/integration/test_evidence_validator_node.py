@@ -7,7 +7,9 @@ from app.graph.nodes.evidence_validator import evidence_validator
 from app.graph.state import ResearchState
 from app.models.company import CompanyProfile, EvidenceClaim
 from app.models.identity import Organization
+from app.models.research import Research
 from app.repositories.evidence import EvidenceRepository
+from app.repositories.research import ResearchRepository
 from app.schemas.evidence import VerificationStatus
 from tests.integration.test_sqlite_security import sqlite_security_environment
 
@@ -151,3 +153,186 @@ async def test_evidence_validator_persists_to_sqlite(sqlite_security_environment
         assert updated_claim is not None
         assert updated_claim["verification_status"] == VerificationStatus.VERIFIED
         assert updated_claim["confidence"] >= 0.75
+
+
+@pytest.mark.asyncio
+async def test_evidence_validator_persists_full_validation_summary_and_human_review_queue(sqlite_security_environment):
+    """Verify full validation summary and review queue are persisted and survive process restart."""
+    factory = sqlite_security_environment["session_factory"]
+
+    # 1. Seed organization and research run
+    async with factory() as session:
+        session.add(Organization(organization_id="org-persist", name="Persistence Test Org"))
+        await session.flush()
+
+        research = Research(
+            research_id="res-persist-1",
+            organization_id="org-persist",
+            company_name="Acme Corp",
+            industry="SaaS",
+            research_question="What is Acme pricing?",
+            status="started",
+            review_status="started",
+            results={},
+            errors=[],
+        )
+        session.add(research)
+        await session.commit()
+
+    # 2. Run evidence validator node with contradictory evidence
+    state = ResearchState(
+        research_id="res-persist-1",
+        organization_id="org-persist",
+        company_name="Acme Corp",
+        industry="SaaS",
+        research_question="What is Acme pricing?",
+        evidence=[
+            {
+                "evidence_id": "ev-p1",
+                "claim": "Acme Starter costs $29/mo",
+                "source_url": "https://reuters.com/acme",
+                "source_domain": "reuters.com",
+                "raw_snippet": "Acme charges $29/mo.",
+                "published_at": "2026-02-01T00:00:00Z",
+            },
+            {
+                "evidence_id": "ev-p2",
+                "claim": "Acme Starter costs $89/mo",
+                "source_url": "https://bloomberg.com/acme",
+                "source_domain": "bloomberg.com",
+                "raw_snippet": "Acme charges $89/mo.",
+                "published_at": "2026-02-01T00:00:00Z",
+            },
+        ],
+    )
+
+    update = await evidence_validator(state)
+    assert update["execution_metadata"][0]["details"]["persistence_status"] == "completed"
+
+    # 3. Simulate process restart by querying through a completely fresh database session
+    async with factory() as fresh_session:
+        evidence_repo = EvidenceRepository(fresh_session)
+        research_repo = ResearchRepository(fresh_session)
+
+        # Retrieve validation summary via evidence repository
+        summary = await evidence_repo.get_validation_summary("res-persist-1", "org-persist")
+        assert summary is not None
+        assert summary["total_claims"] == 2
+        assert summary["contradicted_count"] == 2
+        assert len(summary["contradictions"]) >= 1
+        assert len(summary["human_review_queue"]) >= 1
+
+        # Verify research review_status was set to requires_review
+        res_row = await research_repo.get_by_id("res-persist-1", "org-persist")
+        assert res_row["review_status"] == "requires_review"
+
+
+@pytest.mark.asyncio
+async def test_evidence_validator_cross_tenant_isolation_idor_protection(sqlite_security_environment):
+    """Tenant isolation: Org B cannot retrieve Org A's validation summary."""
+    factory = sqlite_security_environment["session_factory"]
+
+    async with factory() as session:
+        session.add(Organization(organization_id="org-a", name="Org A"))
+        session.add(Organization(organization_id="org-b", name="Org B"))
+        await session.flush()
+
+        research_a = Research(
+            research_id="res-org-a-1",
+            organization_id="org-a",
+            company_name="Acme A",
+            industry="SaaS",
+            research_question="Question A",
+            status="started",
+            review_status="started",
+            results={},
+            errors=[],
+        )
+        session.add(research_a)
+        await session.commit()
+
+    state_a = ResearchState(
+        research_id="res-org-a-1",
+        organization_id="org-a",
+        company_name="Acme A",
+        industry="SaaS",
+        research_question="Question A",
+        evidence=[
+            {
+                "evidence_id": "ev-a-1",
+                "claim": "Acme A was founded in 2020",
+                "source_url": "https://sec.gov/filing",
+                "source_domain": "sec.gov",
+                "raw_snippet": "Founded in 2020 in California.",
+                "published_at": "2026-01-01T00:00:00Z",
+            }
+        ],
+    )
+    await evidence_validator(state_a)
+
+    # Org B attempts to retrieve Org A's summary -> must return None
+    async with factory() as fresh_session:
+        evidence_repo = EvidenceRepository(fresh_session)
+        summary_unauthorized = await evidence_repo.get_validation_summary("res-org-a-1", "org-b")
+        assert summary_unauthorized is None
+
+        # Org A accesses own summary -> succeeds
+        summary_authorized = await evidence_repo.get_validation_summary("res-org-a-1", "org-a")
+        assert summary_authorized is not None
+        assert summary_authorized["verified_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_evidence_validator_retry_idempotency(sqlite_security_environment):
+    """Retrying the validation node does not create duplicate entries or corrupt the review queue."""
+    factory = sqlite_security_environment["session_factory"]
+
+    async with factory() as session:
+        session.add(Organization(organization_id="org-retry", name="Retry Org"))
+        await session.flush()
+
+        research = Research(
+            research_id="res-retry-1",
+            organization_id="org-retry",
+            company_name="Beta Corp",
+            industry="AI",
+            research_question="Question Beta",
+            status="started",
+            review_status="started",
+            results={},
+            errors=[],
+        )
+        session.add(research)
+        await session.commit()
+
+    state = ResearchState(
+        research_id="res-retry-1",
+        organization_id="org-retry",
+        company_name="Beta Corp",
+        industry="AI",
+        research_question="Question Beta",
+        evidence=[
+            {
+                "evidence_id": "ev-r-1",
+                "claim": "Beta Corp raised $10M Series A",
+                "source_url": "https://techcrunch.com/beta",
+                "source_domain": "techcrunch.com",
+                "raw_snippet": "Beta Corp closed $10M Series A.",
+                "published_at": "2026-01-15T00:00:00Z",
+            }
+        ],
+    )
+
+    # First run
+    update_1 = await evidence_validator(state)
+    assert update_1["validation_results"]["total_claims"] == 1
+
+    # Second run (retry)
+    update_2 = await evidence_validator(state)
+    assert update_2["validation_results"]["total_claims"] == 1
+
+    async with factory() as fresh_session:
+        evidence_repo = EvidenceRepository(fresh_session)
+        summary = await evidence_repo.get_validation_summary("res-retry-1", "org-retry")
+        assert summary is not None
+        assert summary["total_claims"] == 1

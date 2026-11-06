@@ -151,7 +151,7 @@ class EncryptedJSON(TypeDecorator[Any]):
     def process_bind_param(self, value: Any, dialect) -> Optional[str]:
         if value is None:
             return None
-        serialized = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        serialized = json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
         return encrypt_text(serialized, associated_data=self.associated_data)
 
     def process_result_value(self, value: Optional[str], dialect) -> Any:

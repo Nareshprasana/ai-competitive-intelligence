@@ -126,6 +126,24 @@ class EvidenceRepository:
         await self._session.refresh(record)
         return self._to_dict(record)
 
+    async def get_validation_summary(
+        self,
+        research_id: str,
+        organization_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve the persisted ValidationSummary for a research run with tenant isolation."""
+        from app.models.research import Research
+
+        stmt = select(Research).where(
+            Research.research_id == research_id,
+            Research.organization_id == organization_id,
+        )
+        res = await self._session.execute(stmt)
+        record = res.scalar_one_or_none()
+        if record is None or not record.results:
+            return None
+        return record.results.get("validation_results")
+
     @staticmethod
     def _to_dict(record: EvidenceClaim) -> Dict[str, Any]:
         return {
