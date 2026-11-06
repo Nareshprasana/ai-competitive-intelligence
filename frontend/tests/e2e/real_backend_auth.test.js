@@ -1,6 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,8 +16,23 @@ const FRONTEND_URL = `http://localhost:${FRONTEND_PORT}`;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
-const TEST_EMAIL = "analyst@real-auth-test.com";
-const TEST_PASSWORD = "Password123!";
+// Load local untracked environment configuration if present
+const envFile = path.resolve(BACKEND_DIR, ".env");
+let envConfig = {};
+if (fs.existsSync(envFile)) {
+  const content = fs.readFileSync(envFile, "utf-8");
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
+      const idx = trimmed.indexOf("=");
+      envConfig[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+    }
+  }
+}
+
+const DB_URL = process.env.ACIS_TEST_DATABASE_URL || envConfig.ACIS_TEST_DATABASE_URL || envConfig.DATABASE_URL;
+const TEST_EMAIL = process.env.TEST_USER_EMAIL || "analyst@real-auth-test.com";
+const TEST_PASSWORD = process.env.TEST_USER_PASSWORD || "Rotated_Auth_Test_Pass_2026!#Secure";
 const TEST_ORG_ID = "org-real-auth-test";
 
 describe("ACIS Phase 3.2: Production Real-Backend Authentication Lifecycle & Cookie Verification", () => {
@@ -57,7 +73,9 @@ describe("ACIS Phase 3.2: Production Real-Backend Authentication Lifecycle & Coo
       cwd: path.resolve(BACKEND_DIR, ".."),
       env: {
         ...process.env,
-        ACIS_TEST_DATABASE_URL: "postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_test_db",
+        ACIS_TEST_DATABASE_URL: DB_URL,
+        DATABASE_URL: DB_URL,
+        TEST_USER_PASSWORD: TEST_PASSWORD,
         DATA_ENCRYPTION_KEYS: '{"k1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}',
         DATA_ENCRYPTION_ACTIVE_KEY_ID: "k1",
         AUTH_JWT_SIGNING_KEY: "test_signing_key_at_least_32_characters_long_12345",
@@ -80,7 +98,8 @@ describe("ACIS Phase 3.2: Production Real-Backend Authentication Lifecycle & Coo
         cwd: BACKEND_DIR,
         env: {
           ...process.env,
-          DATABASE_URL: "postgresql+asyncpg://acis_app:acis_dev_password@127.0.0.1:5432/acis_test_db",
+          DATABASE_URL: DB_URL,
+          ACIS_TEST_DATABASE_URL: DB_URL,
           APP_ENV: "development",
           AUTH_COOKIE_SECURE: "false",
           DATA_ENCRYPTION_KEYS: '{"k1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}',

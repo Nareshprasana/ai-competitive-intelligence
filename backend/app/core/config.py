@@ -6,10 +6,12 @@ degrade gracefully rather than crash the application at import time.
 """
 
 from functools import lru_cache
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+VALID_ENVIRONMENTS: Set[str] = {"development", "test", "staging", "production"}
 
 
 class Settings(BaseSettings):
@@ -27,6 +29,26 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0")
     app_env: str = Field(default="development")
     debug: bool = Field(default=True)
+    acis_enable_memory_fallback: bool = Field(
+        default=False, validation_alias="ACIS_ENABLE_MEMORY_FALLBACK"
+    )
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _validate_app_env(cls, v: str) -> str:
+        if not v or not isinstance(v, str) or v.strip().lower() not in VALID_ENVIRONMENTS:
+            raise ValueError(
+                f"Invalid or unsupported APP_ENV '{v}'. "
+                f"Supported environments are: {', '.join(sorted(VALID_ENVIRONMENTS))}."
+            )
+        return v.strip().lower()
+
+    @field_validator("openrouter_api_key", "database_url", mode="before")
+    @classmethod
+    def _empty_str_to_none(cls, v: object) -> Optional[str]:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v  # type: ignore[return-value]
 
     # --- API ---
     api_v1_str: str = Field(default="/api/v1")
@@ -80,7 +102,15 @@ class Settings(BaseSettings):
 
     # --- Database (PostgreSQL + pgvector) ---
     database_url: Optional[str] = Field(default=None)
-    database_test_url: Optional[str] = Field(default=None)
+    database_test_url: Optional[str] = Field(
+        default=None, validation_alias="DATABASE_TEST_URL"
+    )
+    acis_test_database_url: Optional[str] = Field(
+        default=None, validation_alias="ACIS_TEST_DATABASE_URL"
+    )
+    artifact_storage_path: Optional[str] = Field(
+        default=None, validation_alias="ARTIFACT_STORAGE_PATH"
+    )
 
     # --- Organization / tenant defaults ---
     default_organization_id: str = Field(default="org-dev")
@@ -127,33 +157,57 @@ class Settings(BaseSettings):
         """True when using the deterministic mock search provider (no network)."""
         return self.search_provider.lower() == "mock"
 
+    @property
+    def is_memory_fallback_allowed(self) -> bool:
+        """Returns True only when explicitly permitted in development or test."""
+        env = self.app_env.lower()
+        if env in ("production", "staging"):
+            return False
+        if env in ("development", "test"):
+            return bool(self.acis_enable_memory_fallback)
+        return False
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
-        if self.app_env.lower() != "production":
+        env = self.app_env.lower()
+        if env not in ("production", "staging"):
             return self
-        if self.debug:
-            raise ValueError("DEBUG must be false in production.")
+
+        # Fallback store is strictly forbidden in staging and production
+        if self.acis_enable_memory_fallback:
+            raise ValueError(f"ACIS_ENABLE_MEMORY_FALLBACK is strictly forbidden in {env}.")
+
+        # Cookie security is mandatory in staging and production
+        if not self.auth_cookie_secure:
+            raise ValueError(f"AUTH_COOKIE_SECURE must be true in {env}.")
+
+        # Database URL is mandatory in staging and production
+        if not self.database_url:
+            raise ValueError(f"DATABASE_URL is required in {env}.")
+
+        # Signing keys must be cryptographically long in staging and production
         if len(self.auth_jwt_signing_key.get_secret_value()) < 32:
             raise ValueError(
-                "AUTH_JWT_SIGNING_KEY must contain at least 32 characters in production."
+                f"AUTH_JWT_SIGNING_KEY must contain at least 32 characters in {env}."
             )
         if len(self.auth_email_lookup_key.get_secret_value()) < 32:
             raise ValueError(
-                "AUTH_EMAIL_LOOKUP_KEY must contain at least 32 characters in production."
+                f"AUTH_EMAIL_LOOKUP_KEY must contain at least 32 characters in {env}."
             )
-        if not self.auth_cookie_secure:
-            raise ValueError("AUTH_COOKIE_SECURE must be true in production.")
-        if "*" in self.backend_cors_origins:
-            raise ValueError("Wildcard CORS origins are not allowed in production.")
-        if not self.backend_cors_origins or any(
-            "localhost" in origin or "127.0.0.1" in origin
-            for origin in self.backend_cors_origins
-        ):
-            raise ValueError(
-                "Production CORS origins must be explicitly configured public origins."
-            )
-        if not self.database_url:
-            raise ValueError("DATABASE_URL is required in production.")
+
+        if env == "production":
+            if self.debug:
+                raise ValueError("DEBUG must be false in production.")
+            if "*" in self.backend_cors_origins:
+                raise ValueError("Wildcard CORS origins are not allowed in production.")
+            if not self.backend_cors_origins or any(
+                "localhost" in origin or "127.0.0.1" in origin
+                for origin in self.backend_cors_origins
+            ):
+                raise ValueError(
+                    "Production CORS origins must be explicitly configured public origins."
+                )
+
         return self
 
 

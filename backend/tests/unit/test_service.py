@@ -31,7 +31,10 @@ async def _unavailable_llm(self):
 @pytest.fixture(autouse=True)
 def disable_live_llm(monkeypatch):
     from app.core.database import db
+    from app.core.config import get_settings
 
+    monkeypatch.setenv("ACIS_ENABLE_MEMORY_FALLBACK", "true")
+    get_settings.cache_clear()
     monkeypatch.setattr(db, "_configured", True)
     monkeypatch.setattr(db, "_available", False)
     monkeypatch.setattr(CompanyResearcherAgent, "_get_llm_client", _unavailable_llm)

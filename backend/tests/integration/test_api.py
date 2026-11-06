@@ -14,8 +14,12 @@ from app.security.auth import (
 
 
 @pytest.fixture(autouse=True)
-def authenticated_test_context():
+def authenticated_test_context(monkeypatch):
     from app.core.database import db
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("ACIS_ENABLE_MEMORY_FALLBACK", "true")
+    get_settings.cache_clear()
 
     orig_configured = db._configured
     orig_available = db._available

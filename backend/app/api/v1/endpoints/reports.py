@@ -59,10 +59,10 @@ async def get_report_json_endpoint(
         )
 
     settings = get_settings()
-    if settings.app_env.lower() == "production":
+    if not settings.is_memory_fallback_allowed:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database persistence is required in production environment.",
+            detail="Database persistence is required; in-memory fallback is disabled.",
         )
 
     from app.services.research_service import _fallback_store
@@ -120,10 +120,10 @@ async def download_report_pdf_endpoint(
         )
 
     settings = get_settings()
-    if settings.app_env.lower() == "production":
+    if not settings.is_memory_fallback_allowed:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database persistence is required in production environment.",
+            detail="Database persistence is required; in-memory fallback is disabled.",
         )
 
     from app.services.research_service import _fallback_store
@@ -188,10 +188,10 @@ async def get_report_markdown_endpoint(
         )
 
     settings = get_settings()
-    if settings.app_env.lower() == "production":
+    if not settings.is_memory_fallback_allowed:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database persistence is required in production environment.",
+            detail="Database persistence is required; in-memory fallback is disabled.",
         )
 
     from app.services.research_service import _fallback_store

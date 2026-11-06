@@ -12,8 +12,8 @@ def test_settings_defaults():
 
 
 def test_settings_not_configured_by_default(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
     s = get_settings_uncached()
     assert s.is_llm_configured is False
     assert s.is_database_configured is False

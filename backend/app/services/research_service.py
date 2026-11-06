@@ -101,8 +101,10 @@ async def _get_repository(session) -> ResearchRepository:
 async def _persist_result(result: ResearchResult) -> None:
     """Persist a research result to PostgreSQL when configured, else fallback."""
     if not db.is_available:
-        if get_settings().app_env.lower() == "production":
-            raise DatabaseUnavailableError("Database persistence is required in production environment.")
+        if not get_settings().is_memory_fallback_allowed:
+            raise DatabaseUnavailableError(
+                "Database persistence is required; in-memory fallback is disabled."
+            )
         _fallback_store[result.research_id] = result
         return
 
@@ -126,8 +128,10 @@ async def _persist_result(result: ResearchResult) -> None:
 async def _update_persisted_result(result: ResearchResult) -> None:
     """Update an existing persisted research result (status/results/errors)."""
     if not db.is_available:
-        if get_settings().app_env.lower() == "production":
-            raise DatabaseUnavailableError("Database persistence is required in production environment.")
+        if not get_settings().is_memory_fallback_allowed:
+            raise DatabaseUnavailableError(
+                "Database persistence is required; in-memory fallback is disabled."
+            )
         _fallback_store[result.research_id] = result
         return
 
@@ -301,8 +305,13 @@ async def get_research(research_id: str, organization_id: Optional[str] = None) 
             details={"research_id": research_id},
         )
 
+    if not get_settings().is_memory_fallback_allowed:
+        raise DatabaseUnavailableError(
+            "Database persistence is required; in-memory fallback is disabled."
+        )
+
     result = _fallback_store.get(research_id)
-    if result is None:
+    if result is None or result.organization_id != organization_id:
         raise NotFoundError(
             f"Research {research_id} not found.",
             details={"research_id": research_id},
@@ -350,12 +359,14 @@ async def list_research(
                 for r in rows
             ]
 
+    if not get_settings().is_memory_fallback_allowed:
+        raise DatabaseUnavailableError(
+            "Database persistence is required; in-memory fallback is disabled."
+        )
+
     items = []
     for r in _fallback_store.values():
-        if (
-            r.organization_id == organization_id
-            or organization_id == _settings_default_organization_id()
-        ):
+        if r.organization_id == organization_id:
             items.append(
                 {
                     "research_id": r.research_id,
@@ -399,8 +410,10 @@ async def review_evidence(
     if db.is_available:
         result = await _fetch_from_db(research_id, organization_id)
     else:
-        if get_settings().app_env.lower() == "production":
-            raise DatabaseUnavailableError("Database persistence is required in production environment.")
+        if not get_settings().is_memory_fallback_allowed:
+            raise DatabaseUnavailableError(
+                "Database persistence is required; in-memory fallback is disabled."
+            )
         result = _fallback_store.get(research_id)
 
     if result is None:
@@ -498,8 +511,10 @@ async def review_evidence(
             )
         await _update_persisted_result(result)
     else:
-        if get_settings().app_env.lower() == "production":
-            raise DatabaseUnavailableError("Database persistence is required in production environment.")
+        if not get_settings().is_memory_fallback_allowed:
+            raise DatabaseUnavailableError(
+                "Database persistence is required; in-memory fallback is disabled."
+            )
         _fallback_store[research_id] = result
 
     return {
@@ -521,8 +536,10 @@ async def get_evidence_reviews(
     if db.is_available:
         result = await _fetch_from_db(research_id, organization_id)
     else:
-        if get_settings().app_env.lower() == "production":
-            raise DatabaseUnavailableError("Database persistence is required in production environment.")
+        if not get_settings().is_memory_fallback_allowed:
+            raise DatabaseUnavailableError(
+                "Database persistence is required; in-memory fallback is disabled."
+            )
         result = _fallback_store.get(research_id)
 
     if result is None or result.organization_id != organization_id:

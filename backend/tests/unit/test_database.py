@@ -13,7 +13,7 @@ from app.core.exceptions import DatabaseUnavailableError
 
 @pytest.fixture(autouse=True)
 def unconfigured_db_env(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")
     get_settings.cache_clear()
     orig_configured = db._configured
     orig_available = db._available

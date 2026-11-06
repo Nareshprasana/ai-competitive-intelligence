@@ -365,5 +365,9 @@ if (typeof window !== "undefined") {
     setAccessToken,
     logout,
     login,
+    reviewEvidence,
+    getReport,
+    downloadReportPdf,
+    downloadReportMarkdown,
   };
 }

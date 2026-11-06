@@ -22,6 +22,10 @@ from app.services.research_service import (
     review_evidence,
 )
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 TEST_DATABASE_URL = os.getenv("ACIS_TEST_DATABASE_URL") or ""
 pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
@@ -36,6 +40,7 @@ def _uid(prefix: str = "test") -> str:
 @pytest.fixture(autouse=True)
 def clean_db_singleton():
     yield
+    db._configured = False
     db._available = False
     db._session_factory = None
 
@@ -127,6 +132,7 @@ async def test_evidence_review_persistence_and_machine_preservation_lifecycle(
 
     for decision in decisions:
         # Connect global db singleton to the test engine for service calls
+        db._configured = True
         db._available = True
         db._session_factory = lambda: AsyncSession(pg_engine)
 
@@ -255,6 +261,7 @@ async def test_postgres_tenant_isolation(pg_engine, seed_orgs):
         assert cross_update is None
 
     # 6. Service layer: Beta attempting to fetch Alpha evidence reviews raises NotFoundError
+    db._configured = True
     db._available = True
     db._session_factory = lambda: AsyncSession(pg_engine)
 
@@ -388,6 +395,7 @@ async def test_database_outage_fails_closed_in_production(monkeypatch):
     # Simulate production environment and database unavailable
     settings = get_settings()
     monkeypatch.setattr(settings, "app_env", "production")
+    monkeypatch.setattr(db, "_configured", True)
     monkeypatch.setattr(db, "_available", False)
 
     # 1. Report endpoint must raise 503 Service Unavailable, NEVER fallback
@@ -395,7 +403,7 @@ async def test_database_outage_fails_closed_in_production(monkeypatch):
         await get_report_json_endpoint(context=context, research_id="res-any")
 
     assert exc_info.value.status_code == 503
-    assert "Database persistence is required in production" in exc_info.value.detail
+    assert "Database persistence is required" in exc_info.value.detail
 
     # 2. Research service persistence must raise DatabaseUnavailableError in production
     from app.schemas.research import ResearchResult
