@@ -11,9 +11,10 @@ from app.graph.nodes import (
     research_planner,
     evidence_validator,
     evidence_validator_mock,
+    report_generator,
+    report_generator_mock,
     strategic_analyst,
     strategic_analyst_mock,
-    report_generator_mock,
     finalize_research,
 )
 from app.graph.nodes.company_researcher_mock import company_researcher_mock
@@ -152,6 +153,21 @@ def test_report_generator_mock():
     assert state.final_report is not None
     assert state.final_report["company"] == "Acme Corp"
     assert state.final_report["mock"] is True
+
+
+def test_report_generator_real_node():
+    state = _base_state()
+    state.company_profile = {
+        "products": ["Acme AI Core"],
+        "target_customers": ["Enterprise"],
+    }
+    state = _run(report_generator, state)
+    assert state.final_report is not None
+    assert state.final_report["company"] == "Acme Corp"
+    assert "metadata" in state.final_report
+    assert "executive_summary" in state.final_report
+    assert "swot_analysis" in state.final_report
+    assert "strategic_recommendations" in state.final_report
 
 
 def test_finalize_research_success_no_errors():

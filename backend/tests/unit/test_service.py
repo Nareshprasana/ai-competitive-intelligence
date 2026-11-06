@@ -86,7 +86,7 @@ def test_run_research_returns_structured_result():
         "competitor_discovery",
         "evidence_validator",
         "strategic_analyst",
-        "report_generator_mock",
+        "report_generator",
         "finalize_research",
     ]
     assert result.errors == []

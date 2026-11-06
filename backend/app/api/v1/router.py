@@ -8,7 +8,7 @@ public health and authentication routes belong directly on ``api_router``.
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1.endpoints import auth, health, research
+from app.api.v1.endpoints import auth, health, reports, research
 from app.security.auth import get_current_user
 
 api_router = APIRouter()
@@ -22,6 +22,9 @@ authenticated_router.include_router(
 )
 authenticated_router.include_router(
     research.router, prefix="/research", tags=["research"]
+)
+authenticated_router.include_router(
+    reports.router, prefix="/research", tags=["reports"]
 )
 api_router.include_router(authenticated_router)
 

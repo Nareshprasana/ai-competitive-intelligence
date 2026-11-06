@@ -72,6 +72,8 @@ logs/
 # Misc
 *.tmp
 *.bak
+data/
+backend/data/
 
 # Graphify deliverables are tracked; local analysis/cache metadata is not.
 graphify-out/*
