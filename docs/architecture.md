@@ -1,4 +1,4 @@
-# Architecture — ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A + Phase 2B
+# Architecture — ACIS Phase 0 + Phase 1 + Phase 1.5 + Phase 2A + Phase 2B + Phase 2E
 
 ## Overview
 
@@ -26,7 +26,7 @@ FastAPI (app/main.py)
      │       │   ├─ research_planner
      │       │   ├─ company_researcher
      │       │   ├─ competitor_discovery
-     │       │   ├─ evidence_validator_mock
+     │       │   ├─ evidence_validator
      │       │   ├─ strategic_analyst_mock
      │       │   ├─ report_generator_mock
      │       │   └─ finalize_research
@@ -58,6 +58,7 @@ GET /api/v1/research/{research_id}
 | `app/agents/base.py` | Base agent: search budgeting, rate limiting, result caching, DNS-pinned SSRF-safe URL validation, HTTP fetch with size limits/timeouts |
 | `app/agents/company_researcher.py` | Company Research Agent: query generation → search → retrieval → LLM extraction → evidence → validation → profile |
 | `app/agents/competitor_researcher.py` | Competitor discovery: shared research results → bounded search → extraction → source validation → overlap scoring |
+| `app/agents/evidence_validator.py` | Evidence validator: normalization, 9-tier credibility, freshness, matching, contradictions, review queue |
 | `app/tools/search/base.py` | Abstract `SearchProvider` interface |
 | `app/tools/search/schemas.py` | `SearchResult`, `SearchQuery` Pydantic schemas |
 | `app/tools/search/providers/mock.py` | Deterministic mock provider (offline, no network, no credits) |
@@ -72,7 +73,7 @@ GET /api/v1/research/{research_id}
 | `app/models/competitor.py` | Organization/research-owned competitor and evidence records |
 | `app/repositories/competitor.py` | Organization-scoped competitor access and idempotent persistence support |
 | `app/graph/state.py` | Typed Pydantic `ResearchState` with `Annotated` list reducers |
-| `app/graph/nodes/` | Graph node implementations; `company_researcher` replaces `company_researcher_mock` |
+| `app/graph/nodes/` | Graph node implementations; `company_researcher` and `evidence_validator` replace their mock counterparts |
 | `app/graph/builder.py` | StateGraph construction (optional checkpointer), separate from node logic |
 | `app/services/research_service.py` | Orchestrates graph execution; repository-backed persistence with fallback store |
 

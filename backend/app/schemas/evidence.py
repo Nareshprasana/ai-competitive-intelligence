@@ -1,6 +1,6 @@
 """Pydantic schemas for evidence and provenance tracking."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,8 +23,152 @@ class VerificationStatus(str):
 
     VERIFIED = "verified"
     PARTIALLY_VERIFIED = "partially_verified"
-    CONFLICTING = "conflicting"
     UNVERIFIED = "unverified"
+    CONTRADICTED = "contradicted"
+    CONFLICTING = "conflicting"
+    STALE = "stale"
+    REQUIRES_HUMAN_REVIEW = "requires_human_review"
+
+
+class SourceCredibilityTier(str):
+    """Transparent source credibility classification tiers."""
+
+    OFFICIAL_WEBSITE = "official_website"
+    REGULATORY_FILING = "regulatory_filing"
+    OFFICIAL_DOCUMENTATION = "official_documentation"
+    INDUSTRY_PUBLICATION = "industry_publication"
+    REPUTABLE_NEWS = "reputable_news"
+    RESEARCH_REPORT = "research_report"
+    THIRD_PARTY_DIRECTORY = "third_party_directory"
+    BLOG_OPINION = "blog_opinion"
+    UNVERIFIED_SOCIAL = "unverified_social"
+    OTHER = "other"
+
+
+class SourceCredibilityAssessment(BaseModel):
+    """Credibility assessment for a source."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    source_domain: str
+    source_url: str
+    tier: str = Field(default=SourceCredibilityTier.OTHER)
+    credibility_score: float = Field(ge=0.0, le=1.0)
+    is_primary: bool = False
+    explanation: str
+
+
+class FreshnessAssessment(BaseModel):
+    """Freshness evaluation for an evidence claim."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    category: str = Field(default="general")
+    published_at: Optional[datetime] = None
+    retrieved_at: datetime
+    age_days: Optional[int] = None
+    is_stale: bool = False
+    freshness_score: float = Field(ge=0.0, le=1.0)
+    explanation: str
+
+
+class ClaimEvidenceMatch(BaseModel):
+    """Match assessment between a claim and a specific piece of evidence."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    evidence_id: str
+    match_type: str = Field(
+        ...,
+        description=(
+            "directly_supports | partially_supports | contradicts | "
+            "insufficient | unrelated"
+        ),
+    )
+    relevance_score: float = Field(ge=0.0, le=1.0)
+    explanation: str
+
+
+class ContradictionRecord(BaseModel):
+    """A detected contradiction between two pieces of evidence."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    contradiction_id: str
+    topic: str
+    claim_a: str
+    evidence_id_a: str
+    source_url_a: str
+    claim_b: str
+    evidence_id_b: str
+    source_url_b: str
+    severity: str = Field(
+        default="medium", description="high | medium | low"
+    )
+    explanation: str
+    requires_human_review: bool = True
+
+
+class ClaimValidationResult(BaseModel):
+    """Structured validation result for a single factual claim."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    claim_id: str
+    claim: str
+    validation_status: str
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    supporting_evidence_ids: List[str] = Field(default_factory=list)
+    contradicting_evidence_ids: List[str] = Field(default_factory=list)
+    source_credibility_assessments: List[SourceCredibilityAssessment] = Field(
+        default_factory=list
+    )
+    freshness_assessment: FreshnessAssessment
+    validation_explanation: str
+    missing_evidence: List[str] = Field(default_factory=list)
+    human_review_required: bool = False
+    human_review_reason: Optional[str] = None
+    validated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+class HumanReviewItem(BaseModel):
+    """Claim flagged for human analyst review."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    claim_id: str
+    claim_description: str
+    validation_status: str
+    supporting_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    contradicting_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    reason_for_review: str
+    missing_information: List[str] = Field(default_factory=list)
+    confidence_explanation: str
+
+
+class ValidationSummary(BaseModel):
+    """Comprehensive validation summary for a research run."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    research_id: str
+    total_claims: int
+    verified_count: int
+    partially_verified_count: int
+    unverified_count: int
+    contradicted_count: int
+    stale_count: int
+    requires_human_review_count: int
+    average_confidence: float
+    status: str
+    claim_results: List[ClaimValidationResult] = Field(default_factory=list)
+    contradictions: List[ContradictionRecord] = Field(default_factory=list)
+    human_review_queue: List[HumanReviewItem] = Field(default_factory=list)
+    validated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 class Evidence(BaseModel):
@@ -51,7 +195,7 @@ class Evidence(BaseModel):
         default=None, description="Publication date of the source, if discoverable."
     )
     retrieved_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="When the evidence was retrieved.",
     )
     evidence_type: str = Field(
@@ -102,4 +246,17 @@ class EvidenceCollection(BaseModel):
         return [e for e in self.items if e.source_domain == domain.lower()]
 
 
-__all__ = ["Evidence", "EvidenceCollection", "EvidenceType", "VerificationStatus"]
+__all__ = [
+    "ClaimEvidenceMatch",
+    "ClaimValidationResult",
+    "ContradictionRecord",
+    "Evidence",
+    "EvidenceCollection",
+    "EvidenceType",
+    "FreshnessAssessment",
+    "HumanReviewItem",
+    "SourceCredibilityAssessment",
+    "SourceCredibilityTier",
+    "ValidationSummary",
+    "VerificationStatus",
+]

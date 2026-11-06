@@ -15,7 +15,7 @@ async def _research_planner(state: ResearchState) -> dict:
             "research_planner",
             "company_researcher",
             "competitor_discovery",
-            "evidence_validator_mock",
+            "evidence_validator",
             "strategic_analyst_mock",
             "report_generator_mock",
             "finalize_research",

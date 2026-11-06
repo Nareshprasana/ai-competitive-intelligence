@@ -103,6 +103,29 @@ class EvidenceRepository:
         result = await self._session.execute(stmt)
         return [self._to_dict(record) for record in result.scalars().all()]
 
+    async def update_status(
+        self,
+        evidence_id: str,
+        organization_id: str,
+        *,
+        verification_status: str,
+        confidence: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        stmt = select(EvidenceClaim).where(
+            EvidenceClaim.evidence_id == evidence_id,
+            EvidenceClaim.organization_id == organization_id,
+        )
+        result = await self._session.execute(stmt)
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.verification_status = verification_status
+        if confidence is not None:
+            record.confidence = confidence
+        await self._session.flush()
+        await self._session.refresh(record)
+        return self._to_dict(record)
+
     @staticmethod
     def _to_dict(record: EvidenceClaim) -> Dict[str, Any]:
         return {

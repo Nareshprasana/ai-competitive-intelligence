@@ -1,4 +1,4 @@
-# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1 + 1.5 + 2A + 2B)
+# Agent Design — ACIS LangGraph Multi-Agent System (Phase 1 + 1.5 + 2A + 2B + 2E)
 
 ## Design principles
 
@@ -17,7 +17,8 @@
 | `research_planner` | Builds the research plan from inputs | `research_plan` (steps, focus areas) |
 | `company_researcher` | Real AI-powered company research: search + LLM extraction + evidence | `company_profile`, `evidence` |
 | `competitor_discovery` | Evidence-backed competitor discovery and qualification | `competitors`, `evidence` |
-| `evidence_validator_mock` | Mock evidence + validation summary | `evidence`, `validation_results` |
+| `evidence_validator` | Evidence normalization, 9-tier credibility, freshness, matching, contradictions | `evidence`, `validation_results` |
+| `evidence_validator_mock` | Legacy mock node retained for backwards-compatible test fixtures | `evidence`, `validation_results` |
 | `strategic_analyst_mock` | Mock opportunities/threats/recommendations | `strategic_analysis` |
 | `report_generator_mock` | Assembles the final report from prior artifacts | `final_report` |
 | `finalize_research` | Sets overall status; never reports success on failure | `review_status`, preserves `errors` |
@@ -73,6 +74,54 @@ Search and page budgets and candidate/token caps are configurable through
 `COMPETITOR_MAX_SEARCH_QUERIES`, and `COMPETITOR_MAX_TOKENS`. The default
 search provider is deterministic mock data; live research requires explicit
 DuckDuckGo configuration and an OpenRouter API key for LLM extraction.
+
+## Evidence Validation Agent pipeline (Phase 2E)
+
+The `evidence_validator` node replaces `evidence_validator_mock` in the LangGraph workflow (`NODE_ORDER`). It runs `EvidenceValidatorAgent` (`backend/app/agents/evidence_validator.py`) to verify all collected evidence items and claims across company and competitor research:
+
+1. **Evidence Normalization & Provenance**:
+   - Canonicalizes URLs (normalizes lower-case schemes/hosts, strips default ports `:80`/`:443`, strips UTM and tracking parameters like `fbclid`, `gclid`).
+   - Normalizes domains, titles, and snippets while preserving original provenance and collection timestamps.
+   - Preserves original raw evidence and never mutates source data in place.
+2. **Transparent 9-Tier Source Credibility Assessment**:
+   - Explicit evaluation across 9 distinct tiers:
+     1. `regulatory_filing` (Base credibility 0.95)
+     2. `official_company_website` (0.90)
+     3. `official_product_docs` (0.85)
+     4. `reputable_industry_publication` (0.80)
+     5. `reputable_news` (0.75)
+     6. `research_report` (0.70)
+     7. `third_party_directory` (0.55)
+     8. `blog_opinion` (0.40)
+     9. `unverified_social` (0.25)
+   - Explainable rule-based heuristics map domains (e.g. `sec.gov`, `github.com`, `reuters.com`, `bloomberg.com`, `crunchbase.com`, `medium.com`, `twitter.com`) with secondary checks for directness and primary vs secondary source nature.
+3. **Evidence Freshness by Claim Category**:
+   - Distinct SLA horizons based on sensitivity:
+     - `pricing`: 90 days
+     - `product_availability`: 180 days
+     - `funding`: 365 days
+     - `market_trends`: 365 days
+     - `company_history`: 1825 days (5 years)
+     - `general`: 365 days
+   - Never fabricates missing publication dates (marks `publication_date_unknown` with a conservative freshness factor).
+4. **Claim-to-Evidence Matching & Prompt-Injection Defense**:
+   - Verifies whether snippets substantiate claims through high-coverage Jaccard + stemming token overlap.
+   - Categorizes matches as `supported`, `partially_supported`, `contradicted`, `unrelated`, or `insufficient`.
+   - Hardened against indirect prompt injection in retrieved web text (rejects prompt overrides, instruction injection, system impersonation).
+5. **Cross-Source Contradiction Detection**:
+   - Detects factual and metric contradictions across sources (e.g. conflicting pricing, launch dates, headcount, market claims).
+   - Records both conflicting sides with full source URLs, snippets, and domains.
+   - Never silently discards one source in favor of another. Unresolved conflicts are flagged for human review.
+6. **Deterministic Explainable Confidence Scoring**:
+   - Formula:
+     $$\text{confidence} = 0.40 \times \text{credibility} + 0.30 \times \text{match} + 0.20 \times \text{freshness} + 0.10 \times \text{corroboration} - \text{penalty}$$
+   - Penalties applied for contradictions (-0.25) or missing publication dates (-0.05).
+7. **Human Review Queue & Validation Summary**:
+   - Generates structured items flagged for manual review with severity ratings (`high`, `medium`, `low`) and transparent justification reasons.
+   - Produces aggregated metrics (`total_claims`, `verified_claims`, `contradiction_count`, `average_confidence`).
+8. **State & Database Persistence**:
+   - Updates `ResearchState.validation_results` and `ResearchState.evidence`.
+   - Persists updated `verification_status` and `confidence` to `evidence_claims` and `competitor_evidence` tables with strict tenant (`organization_id`) scoping.
 
 ## State transitions
 

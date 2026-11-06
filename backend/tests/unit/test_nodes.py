@@ -9,6 +9,7 @@ import asyncio
 from app.graph.nodes import (
     initialize_research,
     research_planner,
+    evidence_validator,
     evidence_validator_mock,
     strategic_analyst_mock,
     report_generator_mock,
@@ -74,6 +75,26 @@ def test_evidence_validator_mock():
     assert len(state.evidence) == 2
     assert state.validation_results is not None
     assert state.validation_results["status"] == "validated_mock"
+
+
+def test_evidence_validator_real_node():
+    base = _base_state()
+    base.evidence = [
+        {
+            "evidence_id": "ev-real-1",
+            "claim": "Acme is in AI Software",
+            "source_url": "https://sec.gov/edgar/data/acme",
+            "source_domain": "sec.gov",
+            "raw_snippet": "Acme Corp develops AI Software.",
+            "published_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    state = _run(evidence_validator, base)
+    assert len(state.evidence) == 1
+    assert state.validation_results is not None
+    assert state.validation_results["total_claims"] == 1
+    assert state.validation_results["verified_count"] == 1
+    assert state.evidence[0]["verification_status"] == "verified"
 
 
 def test_strategic_analyst_mock():

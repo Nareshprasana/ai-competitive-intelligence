@@ -84,7 +84,7 @@ def test_run_research_returns_structured_result():
         "research_planner",
         "company_researcher",
         "competitor_discovery",
-        "evidence_validator_mock",
+        "evidence_validator",
         "strategic_analyst_mock",
         "report_generator_mock",
         "finalize_research",

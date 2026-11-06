@@ -16,7 +16,7 @@ EXPECTED_ORDER = [
     "research_planner",
     "company_researcher",
     "competitor_discovery",
-    "evidence_validator_mock",
+    "evidence_validator",
     "strategic_analyst_mock",
     "report_generator_mock",
     "finalize_research",
@@ -111,11 +111,11 @@ def test_full_graph_execution_all_nodes_completed(monkeypatch):
     order = [m["node_name"] for m in final.execution_metadata]
     assert order == EXPECTED_ORDER
     assert all(m["status"] == "completed" for m in final.execution_metadata)
-    # company_researcher and competitor_discovery are real agents (mock=False);
+    # company_researcher, competitor_discovery, and evidence_validator are real agents (mock=False);
     # all others are mocks.
     mock_flags = [m["mock"] for m in final.execution_metadata]
-    assert mock_flags.count(False) == 2
-    assert mock_flags.count(True) == 6
+    assert mock_flags.count(False) == 3
+    assert mock_flags.count(True) == 5
     assert final.final_report is not None
     assert final.final_report["company"] == "Acme Corp"
 

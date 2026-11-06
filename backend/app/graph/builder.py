@@ -3,7 +3,7 @@
 Builds the linear research workflow:
 
     START -> initialize_research -> research_planner -> company_researcher
-    -> competitor_discovery -> evidence_validator_mock -> strategic_analyst_mock
+    -> competitor_discovery -> evidence_validator -> strategic_analyst_mock
     -> report_generator_mock -> finalize_research -> END
 
 Node logic lives in ``app.graph.nodes``; this module only wires the graph.
@@ -20,6 +20,7 @@ from app.graph.nodes.initialize_research import initialize_research
 from app.graph.nodes.research_planner import research_planner
 from app.graph.nodes.company_researcher import company_researcher
 from app.graph.nodes.competitor_discovery_node import competitor_discovery
+from app.graph.nodes.evidence_validator import evidence_validator
 from app.graph.nodes.evidence_validator_mock import evidence_validator_mock
 from app.graph.nodes.strategic_analyst_mock import strategic_analyst_mock
 from app.graph.nodes.report_generator_mock import report_generator_mock
@@ -32,7 +33,7 @@ NODE_ORDER = [
     "research_planner",
     "company_researcher",
     "competitor_discovery",
-    "evidence_validator_mock",
+    "evidence_validator",
     "strategic_analyst_mock",
     "report_generator_mock",
     "finalize_research",
@@ -43,6 +44,7 @@ _NODES = {
     "research_planner": research_planner,
     "company_researcher": company_researcher,
     "competitor_discovery": competitor_discovery,
+    "evidence_validator": evidence_validator,
     "evidence_validator_mock": evidence_validator_mock,
     "strategic_analyst_mock": strategic_analyst_mock,
     "report_generator_mock": report_generator_mock,
