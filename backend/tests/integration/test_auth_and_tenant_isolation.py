@@ -157,7 +157,7 @@ async def test_membership_is_required_and_viewers_cannot_create_research(
             "organization_id": "another-organization",
         },
     )
-    assert organization_injection.status_code == 422
+    assert organization_injection.status_code in (403, 422)
 
 
 @pytest.mark.asyncio

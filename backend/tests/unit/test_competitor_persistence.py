@@ -31,9 +31,16 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 async def session():
+    from app.models.identity import Organization
+
     eng = create_async_engine(TEST_DATABASE_URL)
     async with AsyncSession(eng) as session:
         await session.begin()
+        session.add_all([
+            Organization(organization_id="org-a", name="Org A"),
+            Organization(organization_id="org-b", name="Org B"),
+        ])
+        await session.flush()
         session.add_all(
             [
                 Research(

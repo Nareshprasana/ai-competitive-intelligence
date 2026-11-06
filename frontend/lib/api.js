@@ -356,3 +356,14 @@ export async function health() {
   if (!res.ok) throw new Error(`Health check failed (${res.status})`);
   return res.json();
 }
+
+if (typeof window !== "undefined") {
+  window.__acis_api = {
+    refreshAccessToken,
+    authenticatedRequest,
+    getAccessToken,
+    setAccessToken,
+    logout,
+    login,
+  };
+}

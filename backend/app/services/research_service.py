@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import get_settings
 from app.core.database import db
 from app.core.checkpoint import AsyncPostgresSaver
-from app.core.exceptions import NotFoundError, ResearchError
+from app.core.exceptions import DatabaseUnavailableError, NotFoundError, ResearchError, ValidationError
 from app.core.logging import get_logger
 from app.graph.builder import get_graph
 from app.graph.state import ResearchState
@@ -35,6 +35,16 @@ logger = get_logger("app.services.research_service")
 _fallback_store: Dict[str, ResearchResult] = {}
 # Backward-compatible alias (existing tests reference _research_store).
 _research_store: Dict[str, ResearchResult] = _fallback_store
+
+VALID_REVIEW_DECISIONS = {
+    "approved",
+    "rejected",
+    "flagged",
+    "verified",
+    "partially_verified",
+    "unverified",
+    "contradicted",
+}
 
 
 def _settings_default_organization_id() -> str:
@@ -91,6 +101,8 @@ async def _get_repository(session) -> ResearchRepository:
 async def _persist_result(result: ResearchResult) -> None:
     """Persist a research result to PostgreSQL when configured, else fallback."""
     if not db.is_available:
+        if get_settings().app_env.lower() == "production":
+            raise DatabaseUnavailableError("Database persistence is required in production environment.")
         _fallback_store[result.research_id] = result
         return
 
@@ -114,6 +126,8 @@ async def _persist_result(result: ResearchResult) -> None:
 async def _update_persisted_result(result: ResearchResult) -> None:
     """Update an existing persisted research result (status/results/errors)."""
     if not db.is_available:
+        if get_settings().app_env.lower() == "production":
+            raise DatabaseUnavailableError("Database persistence is required in production environment.")
         _fallback_store[result.research_id] = result
         return
 
@@ -182,7 +196,7 @@ def _row_to_result(row: Dict[str, Any]) -> ResearchResult:
         evidence=results_payload.get("evidence", []),
         validation_results=results_payload.get("validation_results"),
         strategic_analysis=results_payload.get("strategic_analysis"),
-        review_status=row.get("review_status") or results_payload.get("review_status"),
+        review_status=row.get("review_status") or results_payload.get("review_status") or "pending",
         reviewer_feedback=results_payload.get("reviewer_feedback"),
         final_report=results_payload.get("final_report"),
         errors=row.get("errors", []) or results_payload.get("errors", []),
@@ -371,13 +385,22 @@ async def review_evidence(
     analyst_notes: Optional[str] = None,
     override_confidence: Optional[float] = None,
     reviewer_email: Optional[str] = None,
+    reviewed_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Record an analyst human review decision on an evidence claim."""
+    if decision not in VALID_REVIEW_DECISIONS:
+        raise ValidationError(
+            f"Invalid decision '{decision}'. Must be one of: {', '.join(sorted(VALID_REVIEW_DECISIONS))}",
+            details={"decision": decision, "valid_decisions": sorted(VALID_REVIEW_DECISIONS)},
+        )
+    effective_reviewer = reviewer_email or reviewed_by or "analyst@enterprise.com"
     organization_id = organization_id or _settings_default_organization_id()
     result: Optional[ResearchResult] = None
     if db.is_available:
         result = await _fetch_from_db(research_id, organization_id)
     else:
+        if get_settings().app_env.lower() == "production":
+            raise DatabaseUnavailableError("Database persistence is required in production environment.")
         result = _fallback_store.get(research_id)
 
     if result is None:
@@ -427,7 +450,7 @@ async def review_evidence(
     matched_ev["human_review"] = {
         "decision": decision,
         "analyst_notes": analyst_notes,
-        "reviewed_by": reviewer_email,
+        "reviewed_by": effective_reviewer,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
         "override_confidence": override_confidence,
     }
@@ -438,7 +461,7 @@ async def review_evidence(
                 "evidence_id": evidence_id,
                 "decision": decision,
                 "analyst_notes": analyst_notes,
-                "reviewed_by": reviewer_email,
+                "reviewed_by": effective_reviewer,
                 "reviewed_at": datetime.now(timezone.utc).isoformat(),
                 "override_confidence": override_confidence,
             }
@@ -475,6 +498,8 @@ async def review_evidence(
             )
         await _update_persisted_result(result)
     else:
+        if get_settings().app_env.lower() == "production":
+            raise DatabaseUnavailableError("Database persistence is required in production environment.")
         _fallback_store[research_id] = result
 
     return {
@@ -496,6 +521,8 @@ async def get_evidence_reviews(
     if db.is_available:
         result = await _fetch_from_db(research_id, organization_id)
     else:
+        if get_settings().app_env.lower() == "production":
+            raise DatabaseUnavailableError("Database persistence is required in production environment.")
         result = _fallback_store.get(research_id)
 
     if result is None or result.organization_id != organization_id:

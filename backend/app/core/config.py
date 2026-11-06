@@ -33,7 +33,12 @@ class Settings(BaseSettings):
 
     # --- CORS (restricted by default) ---
     backend_cors_origins: List[str] = Field(
-        default=["http://localhost:3000", "http://127.0.0.1:3000"]
+        default=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3009",
+            "http://127.0.0.1:3009",
+        ]
     )
 
     @field_validator("backend_cors_origins", mode="before")

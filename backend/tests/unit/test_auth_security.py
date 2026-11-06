@@ -276,8 +276,9 @@ def test_api_rate_limit_applies_before_authentication(monkeypatch):
     assert len(fake_session.events) == 1
 
 
-def test_error_responses_do_not_echo_credentials_or_internal_exception_details():
-    from app.core.database import get_db_session
+def test_error_responses_do_not_echo_credentials_or_internal_exception_details(monkeypatch):
+    from app.core.database import db, get_db_session
+    monkeypatch.setattr(db, "_available", False)
 
     async def unused_session():
         yield object()

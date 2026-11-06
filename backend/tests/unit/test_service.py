@@ -30,6 +30,10 @@ async def _unavailable_llm(self):
 
 @pytest.fixture(autouse=True)
 def disable_live_llm(monkeypatch):
+    from app.core.database import db
+
+    monkeypatch.setattr(db, "_configured", True)
+    monkeypatch.setattr(db, "_available", False)
     monkeypatch.setattr(CompanyResearcherAgent, "_get_llm_client", _unavailable_llm)
     monkeypatch.setattr(CompetitorResearcherAgent, "_get_llm_client", _unavailable_llm)
     company_node = import_module("app.graph.nodes.company_researcher")

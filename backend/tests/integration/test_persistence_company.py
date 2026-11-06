@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core.config import get_settings
 from app.core.database import db
 from app.models.company import CompanyProfile, EvidenceClaim
+from app.models.identity import Organization
 from app.repositories.company import CompanyRepository
 from app.repositories.evidence import EvidenceRepository
 
@@ -31,6 +32,11 @@ async def session():
     eng = create_async_engine(TEST_DATABASE_URL)
     async with AsyncSession(eng) as session:
         await session.begin()
+        for org_id in ("org-a", "org-b", "org-dev"):
+            existing = await session.get(Organization, org_id)
+            if not existing:
+                session.add(Organization(organization_id=org_id, name=org_id))
+        await session.flush()
         try:
             yield session
         finally:

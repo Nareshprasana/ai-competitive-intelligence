@@ -11,6 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi.responses import PlainTextResponse
 
+from app.core.config import get_settings
 from app.core.database import db
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
@@ -55,6 +56,13 @@ async def get_report_json_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database session unavailable.",
+        )
+
+    settings = get_settings()
+    if settings.app_env.lower() == "production":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database persistence is required in production environment.",
         )
 
     from app.services.research_service import _fallback_store
@@ -109,6 +117,13 @@ async def download_report_pdf_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database session unavailable.",
+        )
+
+    settings = get_settings()
+    if settings.app_env.lower() == "production":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database persistence is required in production environment.",
         )
 
     from app.services.research_service import _fallback_store
@@ -170,6 +185,13 @@ async def get_report_markdown_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database session unavailable.",
+        )
+
+    settings = get_settings()
+    if settings.app_env.lower() == "production":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database persistence is required in production environment.",
         )
 
     from app.services.research_service import _fallback_store

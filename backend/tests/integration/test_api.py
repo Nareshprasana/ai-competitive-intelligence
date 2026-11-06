@@ -15,6 +15,15 @@ from app.security.auth import (
 
 @pytest.fixture(autouse=True)
 def authenticated_test_context():
+    from app.core.database import db
+
+    orig_configured = db._configured
+    orig_available = db._available
+    orig_factory = db._session_factory
+    db._configured = True
+    db._available = False
+    db._session_factory = None
+
     async def current_user():
         return AuthenticatedUser("test-user", "test@example.com", "test-session", False)
 
@@ -29,6 +38,9 @@ def authenticated_test_context():
     app.dependency_overrides[get_organization_context] = organization_context
     yield
     app.dependency_overrides.clear()
+    db._configured = orig_configured
+    db._available = orig_available
+    db._session_factory = orig_factory
 
 
 async def _client():

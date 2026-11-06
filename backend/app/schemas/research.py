@@ -66,7 +66,7 @@ class ResearchResult(BaseModel):
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     validation_results: Optional[Dict[str, Any]] = None
     strategic_analysis: Optional[Dict[str, Any]] = None
-    review_status: str = "pending"
+    review_status: Optional[str] = "pending"
     reviewer_feedback: Optional[str] = None
     final_report: Optional[Dict[str, Any]] = None
     errors: List[Dict[str, Any]] = Field(default_factory=list)

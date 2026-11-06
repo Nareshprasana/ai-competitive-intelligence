@@ -11,7 +11,9 @@ def test_settings_defaults():
     assert "http://localhost:3000" in s.backend_cors_origins
 
 
-def test_settings_not_configured_by_default():
+def test_settings_not_configured_by_default(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     s = get_settings_uncached()
     assert s.is_llm_configured is False
     assert s.is_database_configured is False
