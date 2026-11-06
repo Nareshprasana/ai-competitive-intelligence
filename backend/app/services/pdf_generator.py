@@ -24,7 +24,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from app.schemas.report import StrategicReport
+from app.schemas.report import StrategicReport, format_time_horizon
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -578,7 +578,7 @@ def render_report_to_pdf(report: StrategicReport) -> bytes:
                 Paragraph(
                     f"<b>Objective:</b> {rec.strategic_objective}<br/>"
                     f"<b>Impact:</b> {rec.expected_business_impact}<br/>"
-                    f"<b>Horizon:</b> {rec.time_horizon.value} | <b>Difficulty:</b> {rec.implementation_difficulty.value}<br/>"
+                    f"<b>Horizon:</b> {format_time_horizon(rec.time_horizon)} | <b>Difficulty:</b> {rec.implementation_difficulty.value}<br/>"
                     f"<b>Success Metrics:</b> {', '.join(rec.success_metrics)}",
                     body_style,
                 )

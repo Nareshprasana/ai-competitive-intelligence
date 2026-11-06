@@ -6,7 +6,7 @@ in standard GitHub-Flavored Markdown with tables, callouts, citations, and prove
 
 from typing import Any, Dict
 
-from app.schemas.report import StrategicReport
+from app.schemas.report import StrategicReport, format_time_horizon
 
 
 def render_report_to_markdown(report: StrategicReport) -> str:
@@ -236,7 +236,7 @@ def render_report_to_markdown(report: StrategicReport) -> str:
         lines.append(f"- **Market Need:** {opp.market_or_customer_need}")
         lines.append(f"- **Rationale:** {opp.opportunity_rationale}")
         lines.append(f"- **Business Impact:** {opp.potential_business_impact}")
-        lines.append(f"- **Complexity:** `{opp.implementation_complexity.value}` | **Horizon:** `{opp.time_horizon.value}`")
+        lines.append(f"- **Complexity:** `{opp.implementation_complexity.value}` | **Horizon:** {format_time_horizon(opp.time_horizon)}")
         lines.append(f"- **Confidence:** {int(opp.confidence * 100)}% | **Class:** `{opp.information_class.value}`")
         lines.append("")
 
@@ -265,7 +265,7 @@ def render_report_to_markdown(report: StrategicReport) -> str:
         lines.append(f"- **Objective:** {rec.strategic_objective}")
         lines.append(f"- **Analysis:** {rec.supporting_analysis}")
         lines.append(f"- **Expected Business Impact:** {rec.expected_business_impact}")
-        lines.append(f"- **Difficulty:** `{rec.implementation_difficulty.value}` | **Time Horizon:** `{rec.time_horizon.value}`")
+        lines.append(f"- **Difficulty:** `{rec.implementation_difficulty.value}` | **Time Horizon:** {format_time_horizon(rec.time_horizon)}")
         lines.append(f"- **Success Metrics:** {', '.join(rec.success_metrics)}")
         if rec.risks:
             lines.append(f"- **Risks:** {', '.join(rec.risks)}")

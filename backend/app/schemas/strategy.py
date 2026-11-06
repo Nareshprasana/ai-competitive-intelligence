@@ -55,6 +55,25 @@ class TimeHorizon(str, Enum):
     MEDIUM_TERM = "medium_term"  # 3 - 6 months
     LONG_TERM = "long_term"  # 6 - 12 months
 
+    # Legacy / alias compatibility
+    NEAR_TERM = "near_term"
+
+
+TIME_HORIZON_DISPLAY: Dict[str, str] = {
+    "immediate": "Immediate (0–30 days)",
+    "near_term": "Immediate (0–30 days)",
+    "short_term": "Short-Term (1–3 months)",
+    "medium_term": "Medium-Term (3–6 months)",
+    "long_term": "Long-Term (6–12 months)",
+}
+
+
+def format_time_horizon(horizon: Any) -> str:
+    """Format TimeHorizon enum or string to consistent human-readable label."""
+    if hasattr(horizon, "value"):
+        horizon = horizon.value
+    return TIME_HORIZON_DISPLAY.get(str(horizon).strip().lower(), str(horizon))
+
 
 class StrategicImpact(str, Enum):
     """Qualitative strategic impact level."""
@@ -206,6 +225,21 @@ class MarketOpportunity(BaseModel):
     risks_and_assumptions: List[str] = Field(default_factory=list)
     information_class: InformationClass = InformationClass.INFERENCE
 
+    @field_validator("time_horizon", mode="before")
+    @classmethod
+    def _normalize_time_horizon(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_lower = v.strip().lower()
+            if v_lower in ("immediate", "0-30 days", "0–30 days", "near_term", "near-term", "0-30"):
+                return TimeHorizon.IMMEDIATE
+            if v_lower in ("short_term", "short-term", "1-3 months", "1–3 months", "1-3"):
+                return TimeHorizon.SHORT_TERM
+            if v_lower in ("medium_term", "medium-term", "3-6 months", "3–6 months", "30-90 days", "30–90 days", "3-6"):
+                return TimeHorizon.MEDIUM_TERM
+            if v_lower in ("long_term", "long-term", "6-12 months", "6–12 months", "90+ days", "90+"):
+                return TimeHorizon.LONG_TERM
+        return v
+
 
 class CompetitiveThreat(BaseModel):
     """A strategic competitive or market threat."""
@@ -244,6 +278,21 @@ class StrategicRecommendation(BaseModel):
     success_metrics: List[str] = Field(default_factory=list)
     confidence_score: float = Field(default=0.5, ge=0.0, le=1.0)
     information_class: InformationClass = InformationClass.INFERENCE
+
+    @field_validator("time_horizon", mode="before")
+    @classmethod
+    def _normalize_time_horizon(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_lower = v.strip().lower()
+            if v_lower in ("immediate", "0-30 days", "0–30 days", "near_term", "near-term", "0-30"):
+                return TimeHorizon.IMMEDIATE
+            if v_lower in ("short_term", "short-term", "1-3 months", "1–3 months", "1-3"):
+                return TimeHorizon.SHORT_TERM
+            if v_lower in ("medium_term", "medium-term", "3-6 months", "3–6 months", "30-90 days", "30–90 days", "3-6"):
+                return TimeHorizon.MEDIUM_TERM
+            if v_lower in ("long_term", "long-term", "6-12 months", "6–12 months", "90+ days", "90+"):
+                return TimeHorizon.LONG_TERM
+        return v
 
 
 class EvidenceGap(BaseModel):
@@ -289,6 +338,8 @@ __all__ = [
     "FeatureAvailability",
     "StrategicPriority",
     "TimeHorizon",
+    "TIME_HORIZON_DISPLAY",
+    "format_time_horizon",
     "StrategicImpact",
     "ThreatSeverity",
     "ThreatLikelihood",

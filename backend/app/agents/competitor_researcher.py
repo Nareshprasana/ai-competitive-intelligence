@@ -793,7 +793,11 @@ class CompetitorResearcherAgent(BaseAgent):
         """
         # Product similarity: overlap between competitor products and company products.
         comp_products = " ".join(competitor.products_and_services)
+        if not comp_products and competitor.company_description:
+            comp_products = competitor.company_description
         company_products = " ".join(company_context.get("products", []))
+        if not company_products and company_context.get("description"):
+            company_products = company_context.get("description", "")
         product_similarity = compute_text_overlap(comp_products, company_products)
 
         # Service similarity: same as product similarity for now (services in products).
@@ -801,7 +805,11 @@ class CompetitorResearcherAgent(BaseAgent):
 
         # Customer overlap: overlap between competitor target customers and company target customers.
         comp_customers = " ".join(competitor.target_customers)
+        if not comp_customers and competitor.company_description:
+            comp_customers = competitor.company_description
         company_customers = " ".join(company_context.get("target_customers", []))
+        if not company_customers and company_context.get("description"):
+            company_customers = company_context.get("description", "")
         customer_overlap = compute_text_overlap(comp_customers, company_customers)
 
         # Problem space overlap: competitor description vs company description/research question.

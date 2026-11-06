@@ -25,7 +25,9 @@ from app.schemas.strategy import (
     StrategicPriority,
     StrategicRecommendation,
     SWOTAnalysis,
+    TIME_HORIZON_DISPLAY,
     TimeHorizon,
+    format_time_horizon,
 )
 
 
@@ -182,4 +184,6 @@ __all__ = [
     "ExecutiveSummary",
     "ResearchScopeMethodology",
     "StrategicReport",
+    "TIME_HORIZON_DISPLAY",
+    "format_time_horizon",
 ]
