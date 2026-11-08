@@ -16,7 +16,7 @@ The proposed production architecture balances enterprise-grade security and reli
 4. **Validated Organization Authorization:** A client-supplied `X-Organization-ID` never independently establishes tenant identity; tenant authorization is strictly derived from the authenticated user's validated organization memberships.
 5. **Strict Network Segmentation & Zero Direct Public Exposure:** Only the reverse proxy (ports 80 and 443) is exposed to the public internet. The FastAPI backend, Next.js frontend, research worker, and PostgreSQL database communicate strictly across private, isolated Docker bridge networks.
 6. **Defense-in-Depth Cookie & CSRF Security:** Enforce `SameSite=Strict`, `HttpOnly`, and `Secure` cookies alongside mandatory `X-CSRF-Token` validation, Origin validation, refresh token rotation, and replay revocation.
-7. **Python 3.11 Baseline & Framework Modernization Gate:** Retain verified **`python:3.11.11-slim-bookworm`** as the backend compatibility baseline. Next.js 14 is permitted only for temporary local infrastructure testing in Phase 4A; production release requires modernization to **Next.js 16** (or Next.js 15) on **Node.js 26/24 LTS**.
+7. **Python 3.11 Baseline & Framework Modernization Gate:** Retain verified **`python:3.11.18-slim-bookworm`** (or `3.11.11-slim-bookworm` fallback) as the backend compatibility baseline. Next.js 14 is permitted only for temporary local infrastructure testing in Phase 4A; production release requires modernization to **Next.js 16** (or Next.js 15) on **Node.js 26/24 LTS**.
 
 ---
 
@@ -29,7 +29,7 @@ flowchart TD
     end
 
     subgraph EdgeIngress ["Edge / Ingress Layer"]
-        subgraph ReverseProxy ["Reverse Proxy (Caddy:2.9.1-alpine3.20 / NGINX:1.27.3-alpine3.20)"]
+        subgraph ReverseProxy ["Reverse Proxy (Caddy:2.10.2-alpine3.21 / NGINX:1.27.3-alpine3.21)"]
             TLS["TLS 1.3 Termination\n(Let's Encrypt / ZeroSSL)"]
             SecHeaders["Security Headers Enforcement\nHSTS (No auto-preload), CSP (Report-Only initial),\nX-Frame, X-Content"]
             EdgeRateLimit["Edge Rate Limiter\n(Connection & burst limits)"]
@@ -39,11 +39,11 @@ flowchart TD
 
     subgraph AppNetwork ["Isolated Docker Network: acis_internal (Bridge)"]
         subgraph FrontendService ["Frontend Service (Port 3000)"]
-            NextProd["Next.js App Router (Target: Next.js 16 / React 19)\n- Standalone output mode\n- Non-root user: nextjs (1001)\n- Base: node:26.0.0-alpine3.20 (pref) / node:24.11.0-alpine3.20 (alt)\n- Port 3000 internal only"]
+            NextProd["Next.js App Router (Target: Next.js 16 / React 19)\n- Standalone output mode\n- Non-root user: nextjs (1001)\n- Base: node:26.1.0-alpine3.21 (pref) / node:24.13.0-alpine3.21 (alt)\n- Port 3000 internal only"]
         end
 
         subgraph BackendAPIService ["Backend API Service (Port 8000)"]
-            GunicornUvicorn["ASGI Server: Gunicorn + Uvicorn Workers\n- 2 Workers (CPU bound)\n- Non-root user: appuser (10001)\n- Base: python:3.11.11-slim-bookworm (Retained Baseline)\n- Port 8000 internal only"]
+            GunicornUvicorn["ASGI Server: Gunicorn + Uvicorn Workers\n- 2 Workers (CPU bound)\n- Non-root user: appuser (10001)\n- Base: python:3.11.18-slim-bookworm (Retained Baseline)\n- Port 8000 internal only"]
             
             FastAPIApp["FastAPI Core Application"]
             SecMw["Security & Rate-Limit Middleware"]
@@ -57,7 +57,7 @@ flowchart TD
         end
 
         subgraph WorkerService ["Durable Research Worker Service"]
-            WorkerProcess["Research Worker Process\n(python -m app.workers.research_worker)\n- Non-root user: appuser (10001)\n- Base: python:3.11.11-slim-bookworm\n- Claims jobs via FOR UPDATE SKIP LOCKED\n- Fencing Token check on writes\n- Heartbeat every 15s"]
+            WorkerProcess["Research Worker Process\n(python -m app.workers.research_worker)\n- Non-root user: appuser (10001)\n- Base: python:3.11.18-slim-bookworm\n- Claims jobs via FOR UPDATE SKIP LOCKED\n- Fencing Token check on writes\n- Heartbeat every 15s"]
             LangGraphEngine["LangGraph StateGraph\n- Multi-Agent Orchestration\n- Node execution & checkpointing"]
             DBManagerWorker["DatabaseManager (db singleton)\n- Dedicated worker connection pool: 5 conn"]
             
@@ -66,7 +66,7 @@ flowchart TD
         end
 
         subgraph DBService ["Database Service (Port 5432 - Internal Only)"]
-            PostgresCore["PostgreSQL 18 + pgvector\n(pgvector/pgvector:0.8.7-pg18)\n- Non-root postgres user\n- Max connections: 100\n- Strict auth: SCRAM-SHA-256\n- Mount: /var/lib/postgresql\n- PGDATA=/var/lib/postgresql/18/docker\n- No host port mapping"]
+            PostgresCore["PostgreSQL 18 + pgvector\n(pgvector/pgvector:0.8.7-pg18-bookworm)\n- Non-root postgres user\n- Max connections: 100\n- Strict auth: SCRAM-SHA-256\n- Mount: /var/lib/postgresql\n- PGDATA=/var/lib/postgresql/18/docker\n- No host port mapping"]
             JobQueueTable[("Transactional Queue Table:\nresearch_jobs (SKIP LOCKED, fence_token)")]
             CheckpointTable[("LangGraph Checkpoints:\nAsyncPostgresSaver")]
             
@@ -222,4 +222,4 @@ sequenceDiagram
 1. **Defense-in-Depth Cookie Security:** Refresh cookies strictly enforce `HttpOnly: true`, `Secure: true`, and `SameSite: Strict`. CSRF protection is enforced via `X-CSRF-Token` headers, Origin validation, refresh rotation, and replay session revocation.
 2. **Derived Organization Authorization:** Client-supplied `X-Organization-ID` is verified against authenticated user memberships in PostgreSQL; cross-tenant queries return HTTP 404 to prevent resource enumeration.
 3. **Container Non-Root:** All containers execute under unprivileged user IDs (`10001` backend/worker, `1001` frontend).
-4. **PostgreSQL Network Isolation & Volume Conventions:** PostgreSQL 18 (`pgvector/pgvector:0.8.7-pg18`) is internal-only, enforcing named volume `acis_postgres_data` mounted at `/var/lib/postgresql` with `PGDATA=/var/lib/postgresql/18/docker`.
+4. **PostgreSQL Network Isolation & Volume Conventions:** PostgreSQL 18 (`pgvector/pgvector:0.8.7-pg18-bookworm`) is internal-only, enforcing named volume `acis_postgres_data` mounted at `/var/lib/postgresql` with `PGDATA=/var/lib/postgresql/18/docker`.

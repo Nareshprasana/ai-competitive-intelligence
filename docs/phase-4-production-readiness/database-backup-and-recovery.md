@@ -3,7 +3,7 @@
 **Project:** AI Competitive Intelligence System (ACIS)  
 **Document:** Database Backup, Disaster Recovery & Migration Safety (Audited)  
 **Target Release:** Phase 4 Production Foundation  
-**Target Engine:** PostgreSQL 18 with `pgvector` (`pgvector/pgvector:0.8.7-pg18`)  
+**Target Engine:** PostgreSQL 18 with `pgvector` (`pgvector/pgvector:0.8.7-pg18-bookworm`)  
 **Verification Date:** November 2026
 
 ---
@@ -28,10 +28,11 @@ Disaster recovery targets are established based on operational reality for the i
 
 To guarantee deterministic persistence, safe upgrades, and zero data loss across container recreations:
 1. **Official Upstream Image & Version:**
-   - Image: **`pgvector/pgvector:0.8.7-pg18`** (Verification Date: November 2026).
+   - Image: **`pgvector/pgvector:0.8.7-pg18-bookworm`** (or `pgvector/pgvector:0.8.7-pg18`; Source: `pgvector/pgvector` upstream; Verification Date: November 2026).
    - Component Distinction:
      - PostgreSQL Server Version: **18.x**
      - pgvector Extension Version: **0.8.0 / 0.8.7** (verified compatible with PostgreSQL 18 syntax, HNSW, and IVFFlat index builds).
+     - Base OS: **Debian Bookworm**
 2. **Exact Named Volume and Mount Specification:**
    - **Docker Named Volume:** `acis_postgres_data`
    - **Exact Mount Target:** `/var/lib/postgresql`
@@ -130,7 +131,7 @@ Once weekly, an automated restore test is executed against an ephemeral, isolate
 2. **Checksum Verification:** Run `sha256sum -c manifest.sha256`; verify hash matches the origin creation hash.
 3. **Sandbox Container Provisioning:** Launch an ephemeral verification instance:
    ```bash
-   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d pgvector/pgvector:0.8.7-pg18
+   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d pgvector/pgvector:0.8.7-pg18-bookworm
    ```
 4. **Schema & Data Restoration:**
    ```bash
@@ -154,7 +155,7 @@ In the event of database corruption, ransomware, or catastrophic host loss:
 ### Step 1: Provision Clean Host & Environment
 1. Deploy fresh host VM with hardened OS (Ubuntu 24.04 LTS).
 2. Install Docker Engine and Docker Compose.
-3. Clone repository at the approved release commit (`c4ad04b` or latest production tag).
+3. Clone repository at the approved release commit (`c1ac551` or latest production tag).
 4. Restore `/opt/acis/.env.production` from secured offline password vault.
 
 ### Step 2: Fetch and Decrypt Latest Backup

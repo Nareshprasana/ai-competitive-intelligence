@@ -42,7 +42,7 @@
 
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
-| `[ ]` | Edge reverse proxy (Caddy:2.9.1 / NGINX:1.27.3) terminates TLS 1.3 | Planned for Phase 4C |
+| `[ ]` | Edge reverse proxy (Caddy:2.10.2-alpine3.21 / NGINX:1.27.3-alpine3.21) terminates TLS 1.3 | Planned for Phase 4C |
 | `[ ]` | Automated ACME certificate issuance and 60-day renewal hooks | Planned for Phase 4C (Let's Encrypt / ZeroSSL) |
 | `[ ]` | Complete elimination of public PostgreSQL port mapping (`5432`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
 | `[ ]` | Complete elimination of public backend ASGI port mapping (`8000`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
@@ -58,9 +58,9 @@
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
 | `[ ]` | Backend container builds as multi-stage unprivileged `appuser` (10001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.backend`) |
-| `[ ]` | Backend base image pinned to verified baseline `python:3.11.11-slim-bookworm` | Planned for Phase 4A / ADR-006 |
+| `[ ]` | Backend base image pinned to verified baseline `python:3.11.18-slim-bookworm` | Planned for Phase 4A / ADR-006 |
 | `[ ]` | Frontend container builds as multi-stage unprivileged `nextjs` (1001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.frontend`) |
-| `[ ]` | Frontend base image pinned to Node.js LTS `node:24.11.0-alpine3.20` or `node:26.0.0-alpine3.20` | Planned for Phase 4A / ADR-001 |
+| `[ ]` | Frontend base image pinned to Node.js LTS `node:26.1.0-alpine3.21` or `node:24.13.0-alpine3.21` | Planned for Phase 4A / ADR-001 |
 | `[ ]` | Frontend utilizes Next.js standalone mode (`output: 'standalone'`) | Planned for Phase 4A (`frontend/next.config.js`) |
 | `[ ]` | Backend ASGI runs production Gunicorn/Uvicorn multi-worker process | Planned for Phase 4A (`gunicorn -k uvicorn.workers.UvicornWorker`) |
 | `[ ]` | Explicit CPU and memory limits on all Docker Compose services | Planned for Phase 4A (`deploy.resources.limits`) |
@@ -84,7 +84,7 @@
 | `[ ]` | LangGraph checkpoint resumption on retried / recovered jobs | Planned for Phase 4B / ADR-007 |
 | `[ ]` | At-least-once execution with idempotent agent node side effects | Planned for Phase 4B / ADR-007 |
 | `[ ]` | Frontend status polling against `GET /api/v1/research/{id}` | Planned for Phase 4B |
-| `[ ]` | Official PostgreSQL 18 image `pgvector/pgvector:0.8.7-pg18` with SCRAM-SHA-256 | Planned for Phase 4B / ADR-009 |
+| `[ ]` | Official PostgreSQL 18 image `pgvector/pgvector:0.8.7-pg18-bookworm` with SCRAM-SHA-256 | Planned for Phase 4B / ADR-009 |
 | `[ ]` | Named volume `acis_postgres_data` mounted at `/var/lib/postgresql` with `PGDATA=/var/lib/postgresql/18/docker` | Planned for Phase 4B / ADR-009 |
 | `[ ]` | Automated database migration execution on container startup | Planned for Phase 4B entrypoint script |
 | `[ ]` | Automated daily compressed logical backups (`pg_dump -Fc`) | Planned for Phase 4B (`infrastructure/scripts/backup-database.sh`) |

@@ -3,7 +3,7 @@
 **Project:** AI Competitive Intelligence System (ACIS)  
 **Document:** Architecture Decision Records (ADR-001 through ADR-009)  
 **Target Release:** Phase 4 Production Foundation  
-**Status:** Validated Architecture Specification (Stage 1.2.1 Hardened)  
+**Status:** Validated Architecture Specification (Stage 1.2.2 Hardened)  
 **Verification Date:** November 2026
 
 ---
@@ -12,11 +12,11 @@
 
 ### Status: Accepted
 ### Context
-The existing ACIS frontend is built on Next.js 14.2.17 and React 18.3.1. In late 2026, Next.js 14 is outside official maintenance and support policies. Furthermore, previous drafts mentioned Node.js 20 (which reached official End-of-Life on April 30, 2026) and Node.js 22 (which is entering maintenance in late 2026 and reaches EOL in April 2027). Running an unsupported framework or runtime in production creates serious security compliance violations, unpatched V8/OpenSSL risks, and library deprecation blockers.
+The existing ACIS frontend is built on Next.js 14.2.17 and React 18.3.1. In late 2026, Next.js 14 is outside official maintenance and support policies. Furthermore, previous drafts mentioned Node.js 20 (which reached official End-of-Life on April 30, 2026) and Node.js 22 (which entered maintenance in late 2026 and reaches EOL in April 2027). Running an unsupported framework or runtime in production creates serious security compliance violations, unpatched V8/OpenSSL risks, and library deprecation blockers.
 
 Official Node.js Release Lifecycle Status:
-- **Node.js 26:** Released April 2026; Current/LTS transition October 2026. **Preferred primary long-term runtime.**
-- **Node.js 24:** Active LTS (October 2025 – October 2027; EOL April 2028). Conservative, thoroughly tested alternative.
+- **Node.js 26:** Released April 2026; Active LTS as of October 2026. **Preferred primary long-term runtime.** Exact patch image: `node:26.1.0-alpine3.21`.
+- **Node.js 24:** Maintenance LTS (October 2025 – October 2027; EOL April 2028). Conservative, thoroughly tested alternative. Exact patch image: `node:24.13.0-alpine3.21`.
 - **Node.js 22:** Maintenance LTS (EOL April 30, 2027). **Explicitly disqualified as the primary long-term recommendation.**
 - **Node.js 20:** End-of-Life (April 30, 2026). Strictly prohibited.
 
@@ -26,7 +26,7 @@ Next.js Framework Modernization Matrix:
 
 ### Decision
 1. **Separation of Architectural Gates:**
-   - **Gate A (Temporary Local Infrastructure Testing — Phase 4A):** For initial Docker Compose packaging and containerization in Phase 4A only, Next.js 14.2.17 is temporarily permitted to run on exact patch release **`node:24.11.0-alpine3.20`** (or `node:26.0.0-alpine3.20`) in `output: 'standalone'` mode. This allows local container testing without conflating infrastructure changes with code refactoring.
+   - **Gate A (Temporary Local Infrastructure Testing — Phase 4A):** For initial Docker Compose packaging and containerization in Phase 4A only, Next.js 14.2.17 is temporarily permitted to run on exact patch release **`node:26.1.0-alpine3.21`** (or conservative alternative **`node:24.13.0-alpine3.21`**) in `output: 'standalone'` mode. This allows local container testing without conflating infrastructure changes with code refactoring.
    - **Gate B (Mandatory Production Deployment Gate):** **Next.js 14 is strictly disqualified from production deployment.** Production deployment is blocked until the frontend is modernized to **Next.js 16** (or Next.js 15 as an intermediate step if technically required) with **React 19**, and verified across all unit, integration, and E2E suites.
 2. **Framework Migration Requirements:**
    - Audit and refactor asynchronous request handling (`cookies()`, `headers()` as Promises).
@@ -180,17 +180,18 @@ Cookie security and CSRF defense must be rigorous and grounded in defense-in-dep
 
 ### Status: Accepted
 ### Context
-Using floating tags (e.g. `node:24-alpine`, `python:3.11-slim`, `caddy:2.9-alpine`) introduces non-deterministic builds, breaking changes on rebuilds, and unexpected vulnerabilities. Furthermore, proposing Python 3.12 without empirical compatibility testing risks breaking native compiled dependencies (`asyncpg`, `cryptography`, `selectolax`, `pydantic-core`).
+Using floating tags introduces non-deterministic builds, breaking changes on rebuilds, and unexpected vulnerabilities. Furthermore, proposing Python 3.12 without empirical compatibility testing risks breaking native compiled dependencies (`asyncpg`, `cryptography`, `selectolax`, `pydantic-core`).
 
 ### Decision
 1. **Python Runtime Baseline (Retention of Python 3.11):**
-   - **Phase 4A Baseline:** The backend and worker container images MUST retain **Python 3.11**, pinned explicitly to **`python:3.11.11-slim-bookworm`**.
-   - **Python 3.12 Modernization Gate:** Python 3.12 is designated as a separate, future modernization target. It is **disqualified** from Phase 4A baseline adoption until an isolated build and 302-test backend regression suite proves 100% compatibility with all native C/Rust extensions.
+   - **Phase 4A Baseline:** The backend and worker container images MUST retain **Python 3.11**, pinned to the latest security-patched Debian Bookworm image: **`python:3.11.18-slim-bookworm`** (based on CPython 3.11.18 released October 25, 2026; source: Docker Official Images `library/python`).
+   - **Build Fallback Protocol:** If upstream image propagation delays occur during Phase 4A build execution, the verified previous security patch `python:3.11.11-slim-bookworm` serves as the immediate build fallback until the exact 3.11.18 digest is locked.
+   - **Python 3.12 Modernization Gate:** Python 3.12 is designated as a separate, future modernization target. It is **disqualified** from Phase 4A baseline adoption until an isolated container build and full 302-test backend regression suite proves 100% compatibility with all native C/Rust extensions.
 2. **Strict Patch-Level & OS Codename Pinning:**
-   - **Backend & Worker:** `python:3.11.11-slim-bookworm` (Debian Bookworm security baseline; unprivileged user `appuser:appgroup` 10001).
-   - **Frontend:** `node:24.11.0-alpine3.20` (conservative LTS) or `node:26.0.0-alpine3.20` (preferred modern LTS; unprivileged user `nextjs:nodejs` 1001).
-   - **PostgreSQL 18 + pgvector:** `pgvector/pgvector:0.8.7-pg18` (see ADR-009).
-   - **Reverse Proxy:** `caddy:2.9.1-alpine3.20` (or `nginx:1.27.3-alpine3.20`).
+   - **Backend & Worker:** `python:3.11.18-slim-bookworm` (Debian Bookworm security baseline; unprivileged user `appuser:appgroup` 10001).
+   - **Frontend:** `node:26.1.0-alpine3.21` (preferred modern Active LTS) or `node:24.13.0-alpine3.21` (conservative Maintenance LTS; unprivileged user `nextjs:nodejs` 1001; source: Docker Official Images `library/node`).
+   - **PostgreSQL 18 + pgvector:** `pgvector/pgvector:0.8.7-pg18-bookworm` (source: `pgvector/pgvector` upstream; see ADR-009).
+   - **Reverse Proxy:** `caddy:2.10.2-alpine3.21` (or `nginx:1.27.3-alpine3.21`; source: Docker Official Images `library/caddy`).
 3. **Digest Pinning & Release Verification Policy:**
    - **No Invented Digests:** Architecture and planning documents must never contain fabricated or synthetic SHA-256 hashes.
    - **Pre-Release Digest Lockfile:** In CI/CD release manifests, exact `@sha256:...` multi-architecture digests are resolved via container registry inspection (`docker buildx imagetools inspect` or `crane digest`), verified for `linux/amd64` (and `linux/arm64`), and recorded in version-controlled deployment configurations prior to release.
@@ -256,10 +257,11 @@ PostgreSQL 18 official Debian-based images and the upstream `pgvector/pgvector` 
 
 ### Decision
 1. **Official Upstream Image & Version:**
-   - Image: **`pgvector/pgvector:0.8.7-pg18`** (Verification Date: November 2026).
+   - Image: **`pgvector/pgvector:0.8.7-pg18-bookworm`** (or `pgvector/pgvector:0.8.7-pg18`; Source: `pgvector/pgvector` upstream; Verification Date: November 2026).
    - Component Distinction:
      - PostgreSQL Server Version: **18.x**
      - pgvector Extension Version: **0.8.0 / 0.8.7** (verified compatible with PostgreSQL 18 syntax, HNSW, and IVFFlat index builds).
+     - Base OS: **Debian Bookworm**
 2. **Exact Named Volume and Mount Specification:**
    - **Docker Named Volume:** `acis_postgres_data`
    - **Exact Mount Target:** `/var/lib/postgresql`
