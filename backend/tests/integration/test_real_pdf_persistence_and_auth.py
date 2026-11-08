@@ -301,15 +301,13 @@ async def test_pdf_http_endpoint_authorization(deterministic_research_state, mon
                 assert "data/artifacts" not in text
                 assert "C:\\" not in text
                 assert "/Users/" not in text
+
+            # 5. Unauthorized request (missing token / overrides cleared)
+            app.dependency_overrides.clear()
+            res_no_auth = await client.get(f"/api/v1/research/{research_id}/report/pdf")
+            assert res_no_auth.status_code == 401
         finally:
             app.dependency_overrides.clear()
-            db._configured = orig_configured
-            db._available = orig_available
-            db._engine = orig_engine
-            db._session_factory = orig_factory
+            await db.dispose()
             get_settings.cache_clear()
-
-        # 5. Unauthorized request (missing token / overrides cleared)
-        res_no_auth = await client.get(f"/api/v1/research/{research_id}/report/pdf")
-        assert res_no_auth.status_code == 401
 

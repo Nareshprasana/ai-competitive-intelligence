@@ -55,9 +55,27 @@ class DatabaseManager:
         self._checkpointer: Optional[AsyncPostgresSaver] = None
         self._configured: bool = False
         self._available: bool = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _ensure_configured(self) -> None:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._engine is not None and self._loop is not None and (
+            self._loop.is_closed()
+            or (current_loop is not None and current_loop is not self._loop)
+        ):
+            self._engine = None
+            self._session_factory = None
+            self._configured = False
+            self._available = False
+            self._loop = None
+
         if self._configured:
+            if self._engine is not None and self._loop is None and current_loop is not None:
+                self._loop = current_loop
             return
         settings = get_settings()
         database_url = settings.database_url
@@ -83,6 +101,7 @@ class DatabaseManager:
         )
         self._configured = True
         self._available = True
+        self._loop = current_loop
         logger.info("Database engine configured (lazy; connection established on first use).")
 
     @staticmethod
@@ -234,10 +253,22 @@ class DatabaseManager:
 
     async def dispose(self) -> None:
         """Dispose of the engine (clean shutdown)."""
+        await self.dispose_checkpointer()
         if self._engine is not None:
-            await self._engine.dispose()
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if self._loop is not None and not self._loop.is_closed() and current_loop is self._loop:
+                try:
+                    await self._engine.dispose()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Error disposing database engine.", exc_info=True)
             self._engine = None
             self._session_factory = None
+        self._configured = False
+        self._available = False
+        self._loop = None
 
 
 # Singleton instance used across the application.

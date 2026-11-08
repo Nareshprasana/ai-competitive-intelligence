@@ -4,6 +4,10 @@ import os
 import re
 import json
 
+from dotenv import load_dotenv
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 import pytest
 from sqlalchemy.engine import make_url
 
@@ -49,3 +53,19 @@ def pytest_configure() -> None:
         )
 
     os.environ["DATABASE_URL"] = test_url
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_database_per_test():
+    """Ensure database engine and connections are cleanly disposed between tests.
+
+    Prevents connection pool leaks across pytest-asyncio function-scoped event loops,
+    which cause 'RuntimeError: Event loop is closed' when asyncpg connections
+    from a closed event loop are reused.
+    """
+    yield
+    from app.core.config import get_settings
+    from app.core.database import db
+
+    get_settings.cache_clear()
+    await db.dispose()
