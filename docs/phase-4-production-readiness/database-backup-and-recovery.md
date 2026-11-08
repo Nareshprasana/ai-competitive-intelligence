@@ -3,7 +3,8 @@
 **Project:** AI Competitive Intelligence System (ACIS)  
 **Document:** Database Backup, Disaster Recovery & Migration Safety (Audited)  
 **Target Release:** Phase 4 Production Foundation  
-**Target Engine:** PostgreSQL 18 with `pgvector` (`pgvector/pgvector:0.8.0-pg18`)
+**Target Engine:** PostgreSQL 18 with `pgvector` (`pgvector/pgvector:0.8.7-pg18`)  
+**Verification Date:** November 2026
 
 ---
 
@@ -22,18 +23,25 @@ Disaster recovery targets are established based on operational reality for the i
 ## 2. PostgreSQL 18 Volume Mount & PGDATA Conventions
 
 > [!CRITICAL]
-> **PostgreSQL 18 Volume Isolation and Directory Conventions**  
-> In PostgreSQL 18 containers, mounting a host volume directly to the data cluster root without an explicit subdirectory can cause permission collisions with filesystem metadata (e.g., `lost+found`), trigger accidental anonymous volume creation, or cause total database invisibility when replacing containers.
+> **PostgreSQL 18 Volume Isolation and Directory Conventions (ADR-009)**  
+> Official PostgreSQL 18 Debian-based images and the upstream `pgvector/pgvector` repository adhere to a standardized major-version directory layout. In PostgreSQL 18, the official entrypoint initializes and manages data clusters under `/var/lib/postgresql/18/docker`. Mounting a Docker named volume to `/var/lib/postgresql/data` (the legacy PostgreSQL 17/older convention) conflicts with PostgreSQL 18's default initialization path, causing data clusters to be created outside the volume in ephemeral container storage, leading to total data loss upon container replacement.
 
-To guarantee deterministic persistence and zero data loss across container recreations:
-1. **Official Upstream Image:** Use **`pgvector/pgvector:0.8.0-pg18`** (maintained directly by the pgvector team on official PostgreSQL 18).
-2. **Explicit Volume Mount Specification:**
+To guarantee deterministic persistence, safe upgrades, and zero data loss across container recreations:
+1. **Official Upstream Image & Version:**
+   - Image: **`pgvector/pgvector:0.8.7-pg18`** (Verification Date: November 2026).
+   - Component Distinction:
+     - PostgreSQL Server Version: **18.x**
+     - pgvector Extension Version: **0.8.0 / 0.8.7** (verified compatible with PostgreSQL 18 syntax, HNSW, and IVFFlat index builds).
+2. **Exact Named Volume and Mount Specification:**
    - **Docker Named Volume:** `acis_postgres_data`
-   - **Container Mount Target:** `/var/lib/postgresql/data`
-   - **Mandatory Environment Variable:** `PGDATA=/var/lib/postgresql/data/pgdata`
-3. **Cluster Initialization & Hardening:**
-   - Enforce modern password hashing: `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`
-   - File permissions: internal database cluster files are owned exclusively by `postgres:postgres` (`0700`).
+   - **Exact Mount Target:** `/var/lib/postgresql`
+   - **Exact PGDATA Environment Variable:** `PGDATA=/var/lib/postgresql/18/docker`
+3. **Operational Guarantees:**
+   - **Initialization:** Upon first run, PostgreSQL 18 initializes its cluster within `/var/lib/postgresql/18/docker` on the mounted volume.
+   - **Persistence Across Replacement:** Destroying and replacing the container leaves the data cluster in `/var/lib/postgresql/18/docker` completely intact and immediately discoverable by new container instances.
+   - **Safe Future Upgrades:** Mounting the parent directory `/var/lib/postgresql` enables side-by-side major version directories (e.g., `/var/lib/postgresql/18/docker` and `/var/lib/postgresql/19/docker`) on the same volume, simplifying future `pg_upgrade` workflows without volume copying.
+   - **Authentication:** Enforces SCRAM-SHA-256 via `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`.
+   - **Network Isolation:** Private internal bridge network (`acis_internal`) only; public host port mapping (`5432:5432`) is strictly prohibited.
 
 ---
 
@@ -42,7 +50,7 @@ To guarantee deterministic persistence and zero data loss across container recre
 ```mermaid
 flowchart TD
     subgraph ProductionCluster ["ACIS Production Environment"]
-        PGService["PostgreSQL 18 Database Container\n(Database: acis_db, Volume: acis_postgres_data\nPGDATA=/var/lib/postgresql/data/pgdata)"]
+        PGService["PostgreSQL 18 Database Container\n(Database: acis_db, Volume: acis_postgres_data\nMount: /var/lib/postgresql\nPGDATA: /var/lib/postgresql/18/docker)"]
         CronRunner["Backup Automation Job\n(Systemd Timer / Container Cron)\nExecutes: backup-database.sh"]
         ArtifactsVolume["Artifacts Volume\n(/app/data/artifacts)"]
     end
@@ -122,7 +130,7 @@ Once weekly, an automated restore test is executed against an ephemeral, isolate
 2. **Checksum Verification:** Run `sha256sum -c manifest.sha256`; verify hash matches the origin creation hash.
 3. **Sandbox Container Provisioning:** Launch an ephemeral verification instance:
    ```bash
-   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d pgvector/pgvector:0.8.0-pg18
+   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d pgvector/pgvector:0.8.7-pg18
    ```
 4. **Schema & Data Restoration:**
    ```bash
@@ -146,7 +154,7 @@ In the event of database corruption, ransomware, or catastrophic host loss:
 ### Step 1: Provision Clean Host & Environment
 1. Deploy fresh host VM with hardened OS (Ubuntu 24.04 LTS).
 2. Install Docker Engine and Docker Compose.
-3. Clone repository at the approved release commit (`3aaf713` or latest production tag).
+3. Clone repository at the approved release commit (`c4ad04b` or latest production tag).
 4. Restore `/opt/acis/.env.production` from secured offline password vault.
 
 ### Step 2: Fetch and Decrypt Latest Backup

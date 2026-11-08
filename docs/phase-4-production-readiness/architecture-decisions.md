@@ -3,8 +3,8 @@
 **Project:** AI Competitive Intelligence System (ACIS)  
 **Document:** Architecture Decision Records (ADR-001 through ADR-009)  
 **Target Release:** Phase 4 Production Foundation  
-**Status:** Validated Architecture Specification  
-**Date:** November 2026
+**Status:** Validated Architecture Specification (Stage 1.2.1 Hardened)  
+**Verification Date:** November 2026
 
 ---
 
@@ -26,7 +26,7 @@ Next.js Framework Modernization Matrix:
 
 ### Decision
 1. **Separation of Architectural Gates:**
-   - **Gate A (Temporary Local Infrastructure Testing — Phase 4A):** For initial Docker Compose packaging and containerization in Phase 4A only, Next.js 14.2.17 is temporarily permitted to run on **Node.js 24 LTS or Node.js 26 Alpine** (`node:24-alpine` / `node:26-alpine`) in `output: 'standalone'` mode. This allows local container testing without conflating infrastructure changes with code refactoring.
+   - **Gate A (Temporary Local Infrastructure Testing — Phase 4A):** For initial Docker Compose packaging and containerization in Phase 4A only, Next.js 14.2.17 is temporarily permitted to run on exact patch release **`node:24.11.0-alpine3.20`** (or `node:26.0.0-alpine3.20`) in `output: 'standalone'` mode. This allows local container testing without conflating infrastructure changes with code refactoring.
    - **Gate B (Mandatory Production Deployment Gate):** **Next.js 14 is strictly disqualified from production deployment.** Production deployment is blocked until the frontend is modernized to **Next.js 16** (or Next.js 15 as an intermediate step if technically required) with **React 19**, and verified across all unit, integration, and E2E suites.
 2. **Framework Migration Requirements:**
    - Audit and refactor asynchronous request handling (`cookies()`, `headers()` as Promises).
@@ -176,22 +176,28 @@ Cookie security and CSRF defense must be rigorous and grounded in defense-in-dep
 
 ---
 
-## ADR-006: Container Base Image Pinning and Vulnerability Patch Policy
+## ADR-006: Container Base Image Pinning, Python Baseline, and Patch Policy
 
 ### Status: Accepted
 ### Context
-Using `:latest` or unpinned tags creates non-deterministic builds and security vulnerabilities.
+Using floating tags (e.g. `node:24-alpine`, `python:3.11-slim`, `caddy:2.9-alpine`) introduces non-deterministic builds, breaking changes on rebuilds, and unexpected vulnerabilities. Furthermore, proposing Python 3.12 without empirical compatibility testing risks breaking native compiled dependencies (`asyncpg`, `cryptography`, `selectolax`, `pydantic-core`).
 
 ### Decision
-1. **Strict Tag Pinning:** Production container images must be pinned to explicit patch versions and Debian/Alpine release codenames:
-   - **Backend & Worker:** `python:3.12-slim-bookworm` or `python:3.11-slim-bookworm`.
-   - **Frontend:** `node:24-alpine` (conservative) or `node:26-alpine` (preferred long-term).
-   - **PostgreSQL:** `pgvector/pgvector:0.8.0-pg18` (see ADR-009).
-   - **Reverse Proxy:** `caddy:2.9-alpine` or `nginx:1.27-alpine`.
-2. **Digest Verification Policy:** In production release manifests, images must be pinned to immutable `@sha256:...` digests discovered dynamically during the CI/CD build pipeline (never invented arbitrary hashes).
-3. **Vulnerability Patch Policy:**
+1. **Python Runtime Baseline (Retention of Python 3.11):**
+   - **Phase 4A Baseline:** The backend and worker container images MUST retain **Python 3.11**, pinned explicitly to **`python:3.11.11-slim-bookworm`**.
+   - **Python 3.12 Modernization Gate:** Python 3.12 is designated as a separate, future modernization target. It is **disqualified** from Phase 4A baseline adoption until an isolated build and 302-test backend regression suite proves 100% compatibility with all native C/Rust extensions.
+2. **Strict Patch-Level & OS Codename Pinning:**
+   - **Backend & Worker:** `python:3.11.11-slim-bookworm` (Debian Bookworm security baseline; unprivileged user `appuser:appgroup` 10001).
+   - **Frontend:** `node:24.11.0-alpine3.20` (conservative LTS) or `node:26.0.0-alpine3.20` (preferred modern LTS; unprivileged user `nextjs:nodejs` 1001).
+   - **PostgreSQL 18 + pgvector:** `pgvector/pgvector:0.8.7-pg18` (see ADR-009).
+   - **Reverse Proxy:** `caddy:2.9.1-alpine3.20` (or `nginx:1.27.3-alpine3.20`).
+3. **Digest Pinning & Release Verification Policy:**
+   - **No Invented Digests:** Architecture and planning documents must never contain fabricated or synthetic SHA-256 hashes.
+   - **Pre-Release Digest Lockfile:** In CI/CD release manifests, exact `@sha256:...` multi-architecture digests are resolved via container registry inspection (`docker buildx imagetools inspect` or `crane digest`), verified for `linux/amd64` (and `linux/arm64`), and recorded in version-controlled deployment configurations prior to release.
+   - **Immutable Deployments:** Production deployment scripts execute image pulls strictly by approved immutable digest, never by floating tag, preventing automatic or unexpected upstream drift.
+4. **Vulnerability Patch Policy:**
    - Base images scanned weekly via Trivy in GitHub Actions.
-   - Patch-level security updates reviewed and deployed on a monthly cadence.
+   - Patch-level security updates reviewed and deployed on a monthly cadence via pull request.
    - Critical CVEs (CVSS >= 9.0) trigger an expedited out-of-band rebuild and redeployment within 48 hours.
 
 ---
@@ -246,16 +252,21 @@ In multi-tenant architectures, relying on a client-supplied HTTP header (such as
 
 ### Status: Accepted
 ### Context
-Previous drafts referenced `ankane/pgvector:v0.8.0-pg18`. The official, actively maintained image repository for pgvector is `pgvector/pgvector`. Furthermore, PostgreSQL 18 containers enforce strict internal directory layout rules. Mounting a Docker named volume directly to `/var/lib/postgresql/data` when the image expects a subpath (or vice versa) causes accidental anonymous volume creation, permissions collisions, or total data invisibility when a container is recreated.
+PostgreSQL 18 official Debian-based images and the upstream `pgvector/pgvector` repository adhere to a standardized major-version directory layout. In PostgreSQL 18, the official entrypoint initializes and manages data clusters under `/var/lib/postgresql/18/docker`. Mounting a Docker named volume to `/var/lib/postgresql/data` (the legacy PostgreSQL 17/older convention) conflicts with PostgreSQL 18's default initialization path, causing data clusters to be created outside the volume in ephemeral container storage, leading to total data loss upon container replacement.
 
 ### Decision
-1. **Official Image Pinning:**
-   - Use the official upstream pgvector repository: **`pgvector/pgvector:pg18`** (pinned to specific patch/digest, e.g. `pgvector/pgvector:0.8.0-pg18`).
-2. **Explicit PGDATA Directory & Volume Mount:**
-   - **Named Volume:** `acis_postgres_data`
-   - **Container Mount Path:** `/var/lib/postgresql/data`
-   - **Explicit Environment Variable:** `PGDATA=/var/lib/postgresql/data/pgdata`
-   *Rationale:* Setting `PGDATA` to a subdirectory (`/pgdata`) within the mount point allows PostgreSQL to initialize its cluster cleanly, leaving mount-level filesystem artifacts (e.g., `lost+found`) untouched and preventing permissions conflicts.
-3. **Authentication & Hardening:**
-   - Enforce SCRAM-SHA-256 via `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`.
-   - Private network isolation: PostgreSQL is strictly bound to `acis_internal` bridge network with zero host port exposure.
+1. **Official Upstream Image & Version:**
+   - Image: **`pgvector/pgvector:0.8.7-pg18`** (Verification Date: November 2026).
+   - Component Distinction:
+     - PostgreSQL Server Version: **18.x**
+     - pgvector Extension Version: **0.8.0 / 0.8.7** (verified compatible with PostgreSQL 18 syntax, HNSW, and IVFFlat index builds).
+2. **Exact Named Volume and Mount Specification:**
+   - **Docker Named Volume:** `acis_postgres_data`
+   - **Exact Mount Target:** `/var/lib/postgresql`
+   - **Exact PGDATA Environment Variable:** `PGDATA=/var/lib/postgresql/18/docker`
+3. **Operational Guarantees:**
+   - **Initialization:** Upon first run, PostgreSQL 18 initializes its cluster within `/var/lib/postgresql/18/docker` on the mounted volume.
+   - **Persistence Across Replacement:** Destroying and replacing the container leaves the data cluster in `/var/lib/postgresql/18/docker` completely intact and immediately discoverable by new container instances.
+   - **Safe Future Upgrades:** Mounting the parent directory `/var/lib/postgresql` enables side-by-side major version directories (e.g., `/var/lib/postgresql/18/docker` and `/var/lib/postgresql/19/docker`) on the same volume, simplifying future `pg_upgrade` workflows without volume copying.
+   - **Authentication:** Enforces SCRAM-SHA-256 via `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`.
+   - **Network Isolation:** Private internal bridge network (`acis_internal`) only; public host port mapping (`5432:5432`) is prohibited.

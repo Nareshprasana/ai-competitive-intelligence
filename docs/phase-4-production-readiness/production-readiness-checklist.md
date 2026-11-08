@@ -42,7 +42,7 @@
 
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
-| `[ ]` | Edge reverse proxy (Caddy:2.9 / NGINX:1.27) terminates TLS 1.3 | Planned for Phase 4C |
+| `[ ]` | Edge reverse proxy (Caddy:2.9.1 / NGINX:1.27.3) terminates TLS 1.3 | Planned for Phase 4C |
 | `[ ]` | Automated ACME certificate issuance and 60-day renewal hooks | Planned for Phase 4C (Let's Encrypt / ZeroSSL) |
 | `[ ]` | Complete elimination of public PostgreSQL port mapping (`5432`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
 | `[ ]` | Complete elimination of public backend ASGI port mapping (`8000`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
@@ -58,9 +58,9 @@
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
 | `[ ]` | Backend container builds as multi-stage unprivileged `appuser` (10001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.backend`) |
-| `[ ]` | Backend base image pinned to `python:3.12-slim-bookworm` (or `3.11-slim`) | Planned for Phase 4A / ADR-006 |
+| `[ ]` | Backend base image pinned to verified baseline `python:3.11.11-slim-bookworm` | Planned for Phase 4A / ADR-006 |
 | `[ ]` | Frontend container builds as multi-stage unprivileged `nextjs` (1001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.frontend`) |
-| `[ ]` | Frontend base image pinned to Node.js LTS `node:26-alpine` or `node:24-alpine` | Planned for Phase 4A / ADR-001 |
+| `[ ]` | Frontend base image pinned to Node.js LTS `node:24.11.0-alpine3.20` or `node:26.0.0-alpine3.20` | Planned for Phase 4A / ADR-001 |
 | `[ ]` | Frontend utilizes Next.js standalone mode (`output: 'standalone'`) | Planned for Phase 4A (`frontend/next.config.js`) |
 | `[ ]` | Backend ASGI runs production Gunicorn/Uvicorn multi-worker process | Planned for Phase 4A (`gunicorn -k uvicorn.workers.UvicornWorker`) |
 | `[ ]` | Explicit CPU and memory limits on all Docker Compose services | Planned for Phase 4A (`deploy.resources.limits`) |
@@ -84,8 +84,8 @@
 | `[ ]` | LangGraph checkpoint resumption on retried / recovered jobs | Planned for Phase 4B / ADR-007 |
 | `[ ]` | At-least-once execution with idempotent agent node side effects | Planned for Phase 4B / ADR-007 |
 | `[ ]` | Frontend status polling against `GET /api/v1/research/{id}` | Planned for Phase 4B |
-| `[ ]` | Official PostgreSQL 18 image `pgvector/pgvector:0.8.0-pg18` with SCRAM-SHA-256 | Planned for Phase 4B / ADR-009 |
-| `[ ]` | Named volume `acis_postgres_data` with explicit `PGDATA=/var/lib/postgresql/data/pgdata` | Planned for Phase 4B / ADR-009 |
+| `[ ]` | Official PostgreSQL 18 image `pgvector/pgvector:0.8.7-pg18` with SCRAM-SHA-256 | Planned for Phase 4B / ADR-009 |
+| `[ ]` | Named volume `acis_postgres_data` mounted at `/var/lib/postgresql` with `PGDATA=/var/lib/postgresql/18/docker` | Planned for Phase 4B / ADR-009 |
 | `[ ]` | Automated database migration execution on container startup | Planned for Phase 4B entrypoint script |
 | `[ ]` | Automated daily compressed logical backups (`pg_dump -Fc`) | Planned for Phase 4B (`infrastructure/scripts/backup-database.sh`) |
 | `[ ]` | Backup encryption at rest via AES-256 / GPG before transport | Planned for Phase 4B backup pipeline |
@@ -119,13 +119,13 @@
 | `[ ]` | Automated GitHub Actions CI workflow executing test matrix on PR | Planned for Phase 4E (`.github/workflows/ci.yml`) |
 | `[ ]` | Automated secret scanning in pipeline (`gitleaks` / `trufflehog`) | Planned for Phase 4E (`.github/workflows/security-scan.yml`) |
 | `[ ]` | Container image vulnerability scanning (`trivy`) prior to registry push | Planned for Phase 4E (`.github/workflows/release.yml`) |
-| `[ ]` | Dynamic discovery and release pinning of immutable SHA256 container digests | Planned for Phase 4E / ADR-006 |
+| `[ ]` | Pre-release discovery and version-controlled pinning of immutable SHA256 container digests | Planned for Phase 4E / ADR-006 |
 | `[ ]` | Automated pre-migration snapshot and rollback validation script | Planned for Phase 4E deployment script |
 
 ---
 
 ## 7. Mandatory Production Deployment Blockers
 
-1. **Frontend Framework Modernization Gate:** Commercial production deployment is **strictly blocked** until the frontend is modernized from Next.js 14 to **Next.js 16** (or Next.js 15) with React 19, passing 100% of unit, integration, and E2E tests. Next.js 14 is permitted strictly for temporary local infrastructure testing in Phase 4A.
+1. **Frontend Framework Modernization Gate:** Commercial production deployment is **strictly blocked** until the frontend is modernized from Next.js 14 to **Next.js 16** (or Next.js 15) with React 19, passing 100% of tests. Next.js 14 is permitted strictly for temporary local infrastructure testing in Phase 4A.
 2. **PostgreSQL Backup Verification Gate:** Production deployment is blocked until an automated restore dry-run from an encrypted snapshot is successfully executed against an isolated verification container.
 3. **KMS / HSM Encryption Key Protection Gate:** Production deployment is blocked until master keys for `DATA_ENCRYPTION_KEYS` are secured via a managed KMS, Vault, or HSM.

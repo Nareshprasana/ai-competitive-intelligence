@@ -33,8 +33,8 @@ flowchart LR
 ### Phase 4A: Production Containerization & Local Compose Validation
 - **Objective:** Convert prototype development Dockerfiles into production-hardened, multi-stage, unprivileged container images and validate local composition with pinned LTS runtimes.
 - **Scope:**
-  - Build multi-stage `Dockerfile.backend` on `python:3.12-slim-bookworm` (or `python:3.11-slim-bookworm`) running as non-root `appuser` (UID 10001) with production `gunicorn` / `uvicorn` workers.
-  - Build multi-stage `Dockerfile.frontend` on `node:26-alpine` (preferred) or `node:24-alpine` (conservative alternative) using Next.js `output: 'standalone'` running as non-root `nextjs` (UID 1001). (Node.js 22 is explicitly disqualified as primary long-term runtime).
+  - Build multi-stage `Dockerfile.backend` on verified baseline **`python:3.11.11-slim-bookworm`** running as non-root `appuser` (UID 10001) with production `gunicorn` / `uvicorn` workers.
+  - Build multi-stage `Dockerfile.frontend` on `node:24.11.0-alpine3.20` (conservative alternative) or `node:26.0.0-alpine3.20` (preferred modern LTS) using Next.js `output: 'standalone'` running as non-root `nextjs` (UID 1001). (Node.js 22 is explicitly disqualified as primary long-term runtime).
   - Update `docker-compose.yml` (and production overlay `docker-compose.prod.yml`) with healthchecks, persistent volumes, internal networks, and resource limits.
 - **Dependencies:** Formal acceptance of Phase 3.3 (Commit `f658533`) and ADR-001/ADR-006.
 - **Files to Modify/Create:**
@@ -55,7 +55,7 @@ flowchart LR
 ### Phase 4B: Production Database, Durable Worker & Persistent Storage
 - **Objective:** Establish production-grade PostgreSQL 18 with persistent volume mounts, implement the durable PostgreSQL job queue (`research_jobs`), launch the dedicated research worker process, and deploy backup automation scripts.
 - **Scope:**
-  - Configure PostgreSQL 18 container with pinned `pgvector/pgvector:0.8.0-pg18`, `scram-sha-256` authentication, volume persistence (`acis_postgres_data`), and explicit `PGDATA=/var/lib/postgresql/data/pgdata`.
+  - Configure PostgreSQL 18 container with pinned **`pgvector/pgvector:0.8.7-pg18`**, `scram-sha-256` authentication, volume persistence (`acis_postgres_data` mounted at `/var/lib/postgresql`), and explicit `PGDATA=/var/lib/postgresql/18/docker`.
   - Create Alembic migration `0006_research_jobs.py` for transactional queue table (`id`, `research_id`, `organization_id`, `status`, `worker_id`, `fence_token`, `attempt_count`, `max_attempts`, `lease_expires_at`, `idempotency_key`, `error_details`).
   - Implement worker process `app.workers.research_worker` with `SELECT ... FOR UPDATE SKIP LOCKED` claim loop, fencing token validation on writes, and `AsyncPostgresSaver` checkpoint resumption.
   - Create pre-startup migration entrypoint (`alembic upgrade head`) with fail-fast validation.
@@ -81,7 +81,7 @@ flowchart LR
 ---
 
 ### Phase 4C: Reverse Proxy, TLS Termination & Network Hardening
-- **Objective:** Deploy edge reverse proxy (Caddy 2.9-alpine or NGINX 1.27-alpine) with TLS 1.3, strict security headers (CSP Report-Only, HSTS without auto-preload), and total isolation of internal database and application ports.
+- **Objective:** Deploy edge reverse proxy (Caddy 2.9.1-alpine3.20 or NGINX 1.27.3-alpine3.20) with TLS 1.3, strict security headers (CSP Report-Only, HSTS without auto-preload), and total isolation of internal database and application ports.
 - **Scope:**
   - Configure reverse proxy routing: `/` to Next.js (port 3000), `/api/*` to FastAPI (port 8000).
   - Enforce TLS 1.3, HSTS (`Strict-Transport-Security: max-age=31536000; includeSubDomains` without preload), CSP Report-Only, and anti-sniffing headers.
@@ -129,7 +129,7 @@ flowchart LR
 - **Scope:**
   - Create `.github/workflows/ci.yml`: runs linting, backend tests (pytest against PostgreSQL service container), frontend unit tests, and production build.
   - Integrate automated secret scanning (`gitleaks` / `trufflehog`) and dependency vulnerability checks (`pip-audit`, `npm audit`).
-  - Create `.github/workflows/release.yml`: builds multi-arch container images on Git tag, scans images with Trivy, and pushes to private container registry with pinned digests.
+  - Create `.github/workflows/release.yml`: builds multi-arch container images on Git tag, scans images with Trivy, and pushes to private container registry with pre-resolved immutable digests.
 - **Dependencies:** Completion of Phase 4A–4D; ADR-006.
 - **Files to Modify/Create:**
   - `.github/workflows/ci.yml`
@@ -174,10 +174,10 @@ Before initiating any coding, Dockerfile editing, or container composition in Ph
 - [x] **ADR-002 & ADR-003:** Durable PostgreSQL transactional queue (`research_jobs` with `SKIP LOCKED`, 15s heartbeats, 30s lease expiry, crash reclamation).
 - [x] **ADR-004:** Four independent secret categories; KMS/Vault/HSM requirement for production sensitive-data encryption.
 - [x] **ADR-005:** `SameSite=Strict` cookies treated as defense-in-depth alongside mandatory CSRF tokens and Origin validation; HSTS without auto-preload; CSP in Report-Only mode first.
-- [x] **ADR-006:** Base image tag pinning and dynamic release digest pinning policy; non-root user execution (`10001`/`1001`).
+- [x] **ADR-006:** Backend retains verified `python:3.11.11-slim-bookworm` baseline; exact tag and pre-release digest pinning policy; non-root user execution (`10001`/`1001`).
 - [x] **ADR-007:** At-least-once execution with idempotent node side effects; monotonic fencing tokens (`fence_token`) on writes.
 - [x] **ADR-008:** Validated organization authorization derived strictly from authenticated user memberships; client-supplied `X-Organization-ID` serves only as a context selector; cross-tenant access returns 404.
-- [x] **ADR-009:** Official `pgvector/pgvector:0.8.0-pg18` image with explicit named volume mount `/var/lib/postgresql/data` and `PGDATA=/var/lib/postgresql/data/pgdata`.
+- [x] **ADR-009:** Official `pgvector/pgvector:0.8.7-pg18` image with explicit named volume mount at `/var/lib/postgresql` and `PGDATA=/var/lib/postgresql/18/docker`.
 
 ### 2. Decisions Remaining Open for Stakeholder Confirmation
 - **Hosting Provider:** Hetzner Cloud CPX31 (~$20–$25/mo fully loaded) vs. DigitalOcean Droplet (~$60/mo). (Does not block local Phase 4A implementation).
@@ -202,4 +202,20 @@ Before initiating any coding, Dockerfile editing, or container composition in Ph
 ### 6. Worker Reliability & Database Readiness Requirements
 - Database migration `0006_research_jobs.py` must apply cleanly via Alembic.
 - Worker process must trap `SIGTERM`/`SIGINT` for graceful shutdown.
-- Named volume `acis_postgres_data` must mount to `/var/lib/postgresql/data` with explicit `PGDATA=/var/lib/postgresql/data/pgdata`.
+- Named volume `acis_postgres_data` must mount to `/var/lib/postgresql` with explicit `PGDATA=/var/lib/postgresql/18/docker`.
+
+---
+
+## 4. Exact Technical Verification Still Required During Phase 4A
+
+When Phase 4A implementation begins, the engineering team must execute the following isolated, empirical verifications:
+1. **Multi-Stage Backend Build Verification:** Build `Dockerfile.backend` with `python:3.11.11-slim-bookworm`; confirm all native dependencies (`asyncpg`, `cryptography`, `argon2-cffi`, `selectolax`, `pydantic-core`) install cleanly without compilers in the final runtime stage; verify container runs as `appuser` (`uid=10001`).
+2. **Next.js Standalone Build Verification:** Build `Dockerfile.frontend` using `output: 'standalone'` on `node:24.11.0-alpine3.20` / `node:26.0.0-alpine3.20`; confirm static assets and server chunks bundle properly into `.next/standalone`; verify container runs as `nextjs` (`uid=1001`).
+3. **Official PostgreSQL 18 + pgvector Verification:** Pull `pgvector/pgvector:0.8.7-pg18`; verify pgvector extension initializes in PostgreSQL 18 via `CREATE EXTENSION vector;`; test `halfvec` and HNSW index support.
+4. **Volume Mount Persistence Verification:**
+   - Mount named volume `acis_postgres_data` to `/var/lib/postgresql` with `PGDATA=/var/lib/postgresql/18/docker`.
+   - Run Alembic migrations `0001` through `0005`.
+   - Insert a test record, stop and remove the container (`docker compose down`).
+   - Launch a new container instance referencing the same named volume; verify that `/var/lib/postgresql/18/docker` persists and all tables/data are immediately visible.
+5. **Private Network Isolation Verification:** Inspect `docker network inspect acis_internal`; verify backend, worker, and PostgreSQL containers can resolve each other via internal DNS, while `nmap` or `curl` from the host cannot connect to port 5432.
+6. **Health Probe Verification:** Confirm `GET /api/v1/health` responds HTTP 200 within 50ms inside the local Compose environment.
