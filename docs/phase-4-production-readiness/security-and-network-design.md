@@ -1,7 +1,7 @@
 # ACIS Security and Network Design
 
 **Project:** AI Competitive Intelligence System (ACIS)  
-**Document:** Security & Network Architecture  
+**Document:** Security & Network Architecture (Hardened Specification)  
 **Target Release:** Phase 4 Production Foundation  
 **Classification:** Security Architecture Specification
 
@@ -21,13 +21,14 @@ flowchart TD
         Firewall["Host Firewall (UFW / iptables)\nAllow Inbound: 80, 443, 22 (SSH keys only)\nDrop All Other Inbound Ports"]
         
         subgraph IngressBridge ["Docker Bridge Network: acis_ingress"]
-            ProxyContainer["Reverse Proxy (NGINX / Caddy)\n- Exposed: 0.0.0.0:80, 0.0.0.0:443\n- TLS 1.3 Termination\n- Drops Host Headers\n- Strips internal spoofed headers"]
+            ProxyContainer["Reverse Proxy (Caddy:2.9.1 / NGINX:1.27.3)\n- Exposed: 0.0.0.0:80, 0.0.0.0:443\n- TLS 1.3 Termination\n- Strips spoofed X-Forwarded-* headers\n- Injects real client IP"]
         end
 
         subgraph InternalBridge ["Docker Bridge Network: acis_internal (Isolated)"]
             FrontendContainer["Next.js Frontend Container\n- Internal Port: 3000\n- NO Host Port Mapping"]
             BackendContainer["FastAPI Backend Container\n- Internal Port: 8000\n- NO Host Port Mapping\n- Trusted Proxy: Only Reverse Proxy IP"]
-            PostgresContainer["PostgreSQL 18 Database\n- Internal Port: 5432\n- NO Host Port Mapping\n- Isolated from public internet"]
+            WorkerContainer["Durable Research Worker Container\n- Background Process (No exposed ports)\n- Dedicated DB pool"]
+            PostgresContainer["PostgreSQL 18 Database Container\n- Internal Port: 5432\n- NO Host Port Mapping\n- Isolated from public internet"]
         end
     end
 
@@ -35,6 +36,7 @@ flowchart TD
     ProxyContainer -->|HTTP :3000 (Internal)| FrontendContainer
     ProxyContainer -->|HTTP :8000 (Internal)| BackendContainer
     BackendContainer -->|TCP :5432 (Internal)| PostgresContainer
+    WorkerContainer -->|TCP :5432 (Internal)| PostgresContainer
     FrontendContainer -.->|SSR / Internal API| ProxyContainer
 
     classDef public fill:#d32f2f,stroke:#b71c1c,color:#fff;
@@ -45,7 +47,7 @@ flowchart TD
     class PublicZone,InternetTraffic public;
     class HostBoundary,Firewall firewall;
     class IngressBridge,ProxyContainer proxy;
-    class InternalBridge,FrontendContainer,BackendContainer,PostgresContainer internal;
+    class InternalBridge,FrontendContainer,BackendContainer,WorkerContainer,PostgresContainer internal;
 ```
 
 ### 1.1 Ingress & Port Exposure Rules
@@ -60,10 +62,10 @@ flowchart TD
 
 ---
 
-## 2. Reverse Proxy & Transport Layer Security (TLS)
+## 2. Reverse Proxy, TLS & Ingress Security Headers
 
-### 2.1 TLS Configuration
-- **Protocols:** TLS 1.3 (primary) and TLS 1.2 (for backward compatibility). SSLv2, SSLv3, TLS 1.0, and TLS 1.1 are explicitly disabled.
+### 2.1 TLS 1.3 Transport Security
+- **Protocols:** TLS 1.3 (primary) and TLS 1.2 (for legacy compatibility). All legacy protocols (SSLv2, SSLv3, TLS 1.0, TLS 1.1) are explicitly disabled.
 - **Cipher Suites:** Modern PFS (Perfect Forward Secrecy) ciphers:
   - `TLS_AES_256_GCM_SHA384`
   - `TLS_CHACHA20_POLY1305_SHA256`
@@ -72,19 +74,36 @@ flowchart TD
   - `ECDHE-RSA-AES256-GCM-SHA384`
 - **Certificate Lifecycle:** Automated issuance and renewal using Let's Encrypt ACME via Caddy or NGINX + Certbot with automated 60-day renewal hooks.
 
-### 2.2 HTTP Security Headers
-The reverse proxy injects mandatory security headers on every response:
+### 2.2 HSTS Strategy & Preload Prerequisites
+- **Initial Production Setting:**
+  ```http
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  ```
+- **HSTS Preload Policy:** **Do NOT enable HSTS preload automatically.**
+  - *Prerequisites for Preload:*
+    1. Valid certificate on root domain and all subdomains.
+    2. HTTP-to-HTTPS redirect on port 80 for all subdomains.
+    3. Minimum 90 days of stable production HTTPS operation without certificate expiration.
+    4. Explicit submission to `hstspreload.org`.
+  - *Operational Warning:* Once a domain is accepted into the global browser HSTS preload list, removing it or serving HTTP for legacy subdomains requires months of browser engine vendor coordination.
 
+### 2.3 Content Security Policy (CSP): Report-Only First
+To prevent Next.js hydration failures, inline style blocking, or dynamic script breakage:
+- **Phase 1 (Staging & Initial Production):** Deploy in `Report-Only` mode:
+  ```http
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; report-uri /api/v1/telemetry/csp-reports;
+  ```
+- **Phase 2 (Hardened Enforcement):** After 30 days of clean violation logs, enforce blocking `Content-Security-Policy`.
+
+### 2.4 Anti-Clickjacking & MIME Protection
 ```http
-Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
-Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';
 ```
 
-### 2.3 Trusted Proxy & Anti-Spoofing Configuration
+### 2.5 Trusted Proxy & Anti-Spoofing Configuration
 To prevent spoofed IP injection and ensure accurate audit logging and rate limiting:
 1. **Header Stripping:** The reverse proxy sanitizes and rewrites all incoming `X-Forwarded-*` headers before forwarding requests.
 2. **FastAPI Trusted Proxy Settings:**
@@ -95,81 +114,51 @@ To prevent spoofed IP injection and ensure accurate audit logging and rate limit
 
 ## 3. Application Security & Authentication Hardening
 
-```mermaid
-flowchart LR
-    subgraph Client ["Client Browser"]
-        MemAccess["Memory: Access Token (JWT 10m)"]
-        HttpCookie["Cookie: refresh_token (HttpOnly, Secure)"]
-        HeaderOrg["Header: X-Organization-ID"]
-    end
+### 3.1 Strict Cookie Policy (`SameSite=Strict`)
+All refresh token cookies issued by `/api/v1/auth/login` and `/api/v1/auth/refresh` enforce:
+- `HttpOnly: true` (inaccessible to JavaScript).
+- `Secure: true` (transmitted only over HTTPS).
+- `SameSite: Strict` (preventing cookie transmission on any cross-site navigation or third-party links).
+*Architecture Justification:* Because the reverse proxy serves both the Next.js frontend (`/`) and FastAPI backend (`/api/v1`) under the exact same origin (e.g. `https://acis.example.com`), `SameSite=Strict` provides complete immunity to Cross-Site Request Forgery (CSRF) without interfering with legitimate user navigation.
 
-    subgraph BackendAuth ["Backend Auth & Validation Layer"]
-        TokenParser["JWT Token Validator\n(HMAC-SHA256, 32+ char key)"]
-        TenantGuard["Tenant Match Guard\n(org_id claim == X-Organization-ID)"]
-        CryptoVault["AES-256-GCM Decryptor\n(Sensitive data decryption)"]
-        RateLimiter["Redis/Postgres Rate Limiter\n(120 req/min API, 20 req/min Auth)"]
-    end
-
-    subgraph DatabaseLayer ["PostgreSQL Storage"]
-        ArgonHash["Argon2id Password Hashes"]
-        EncData["Encrypted DB Columns (AES-256-GCM)"]
-        AuditLog["Immutable AuditEvent Rows"]
-    end
-
-    Client -->|Bearer Token| TokenParser
-    Client -->|X-Organization-ID| TenantGuard
-    Client -->|HttpOnly Cookie| BackendAuth
-    TokenParser --> TenantGuard --> CryptoVault
-    BackendAuth --> RateLimiter
-    BackendAuth --> ArgonHash & EncData & AuditLog
-```
-
-### 3.1 Authentication & Session Controls
+### 3.2 Authentication & Session Controls
 - **Password Storage:** Verified Argon2id with memory cost 65536 KiB, time cost 3 iterations, and 4 lanes. Raw passwords are never logged, stored, or cached.
 - **Short-Lived Access Tokens:** Issued as signed JWTs valid for **10 minutes**, carrying `sub` (user_id), `org_id` (organization_id), `role`, and expiration timestamps.
-- **Refresh Token Rotation & Revocation:** Refresh tokens are 30-day cryptographically random 64-character tokens stored only in HTTP cookies with `HttpOnly`, `Secure`, and `SameSite=Lax` attributes. Each refresh issuance invalidates the prior refresh token.
+- **Refresh Token Rotation & Revocation:** Refresh tokens are 30-day cryptographically random 64-character tokens. Each refresh issuance invalidates the prior refresh token.
 - **Email Lookup Protection:** Blind index hashing using HMAC-SHA256 (`AUTH_EMAIL_LOOKUP_KEY`) allows lookups without plaintext indexing.
 
-### 3.2 Tenant Isolation & Multi-Tenancy Defense
+### 3.3 Tenant Isolation & Multi-Tenancy Defense
 - **Header & Token Matching:** Incoming requests to `/api/v1/research/*` must present both a valid JWT and an `X-Organization-ID` header. The backend strictly validates that the caller is a member of the requested organization; mismatches result in immediate HTTP 403 Forbidden.
 - **Row-Level Query Scoping:** All SQLAlchemy repositories (`ResearchRepository`, `TenantRepository`, etc.) enforce mandatory `WHERE organization_id = :org_id` filters on all `SELECT`, `UPDATE`, and `DELETE` queries.
 - **Artifact Path Traversal Defense:** `ArtifactStorageService` rejects any tenant identifier or artifact filename that violates `^[a-zA-Z0-9_\-]+$`, and verifies that resolved paths reside inside `/app/data/artifacts/{org_id}/` via `Path.is_relative_to()`.
 
-### 3.3 Data Encryption at Rest
+### 3.4 Data Encryption at Rest (AES-256-GCM)
 - **Sensitive Payload Encryption:** Database columns storing research intelligence, competitor dossiers, evidence notes, and LLM raw outputs are encrypted using AES-256-GCM with unique 96-bit initialization vectors (IVs) per row via `app.security.crypto`.
 - **Key Rotation Support:** Multiple keys can be registered in `DATA_ENCRYPTION_KEYS` JSON (`{"v1": "...", "v2": "..."}`). New writes use `DATA_ENCRYPTION_ACTIVE_KEY_ID`, while reads dynamically decrypt legacy versions.
 
 ---
 
-## 4. Production Secrets Management Strategy
+## 4. Production Secrets & Encryption Key Management
 
 ### 4.1 Comparative Evaluation of Secrets Management Approaches
 
-| Strategy | Security Posture | Operational Complexity | Cost | Suitability for Initial Production |
+| Strategy | Security Posture | Operational Complexity | Cost | Suitability for ACIS |
 | :--- | :--- | :--- | :--- | :--- |
-| **Option 1: Environment File (`.env`) with Strict File Permissions** | **Moderate.** Stored on host disk; readable by host root/app user. If host is compromised, secrets are exposed. | **Lowest.** Standard Docker Compose `env_file` or `environment`. Familiar, no extra services. | **Free.** | **Recommended for Initial Production Release**, provided file permissions are `chmod 0600` and host is hardened. |
-| **Option 2: Docker Secrets (Compose / Swarm)** | **High.** Secrets mounted as in-memory files at `/run/secrets/*`; not visible in `docker inspect` or process environment variables. | **Low to Moderate.** Requires minor application adaptation to read secrets from files (`_FILE` suffix pattern). | **Free.** | **Recommended Upgrade Path for Phase 4A/B** for enhanced container isolation. |
-| **Option 3: HashiCorp Vault (Self-Hosted)** | **Enterprise Grade.** Dynamic secrets, automated rotation, detailed access auditing. | **Very High.** Requires dedicated server, unsealing procedure, Consul backend, and ongoing maintenance. | **High (Compute & Ops overhead).** | **Not Recommended for Initial Release.** Unnecessary complexity for small team. |
-| **Option 4: Cloud Secrets Manager (AWS / GCP / Infisical)** | **Enterprise Grade.** Hardware security modules (HSMs), IAM role-based access, automated audit logs. | **Low to Moderate.** Minimal infrastructure to maintain, but adds external cloud API latency and provider lock-in. | **$0.40/secret/month + API call costs.** | **Recommended when migrating to AWS/GCP managed infrastructure.** |
+| **Option 1: Protected Environment File (`.env.production`)** | **Moderate.** Stored on host disk; readable by host root. File restricted to `chmod 0600 root:root`. | **Lowest.** Standard Docker Compose `env_file`. Familiar, zero extra services. | **$0** | **Suitable for Initial Host VPS Pilot Only.** |
+| **Option 2: Docker Compose Secrets (`/run/secrets/*`)** | **High.** In-memory tmpfs mounts; not visible in `docker inspect` or process environment listings. | **Low to Moderate.** Requires minor application adapter to read `_FILE` suffix paths. | **$0** | **Recommended Standard for Containerized Host Deployment.** |
+| **Option 3: HashiCorp Vault (Self-Hosted)** | **Enterprise Grade.** Dynamic secrets, automated leasing, audit trails, HSM unsealing. | **Very High.** Requires dedicated cluster, unsealing ceremonies, storage backend. | **High (Compute & Ops overhead).** | **Not Recommended for Initial Release** (Unnecessary operational overhead). |
+| **Option 4: Cloud Secrets Manager (AWS / GCP / Infisical)** | **Enterprise Grade.** Native IAM role authorization, audit trails, automatic rotation hooks. | **Low to Moderate.** Minimal host footprint; adds cloud API latency and provider lock-in. | **$0.40/secret/month + API calls.** | **Mandatory Requirement for Cloud-Hosted Production.** |
 
-### 4.2 Recommended Approach: Hardened Host Injection & Migration to Docker Secrets
-1. **Initial Deployment:** Inject secrets via Docker environment variables from a secured host file (`/opt/acis/.env.production`) with permissions `chmod 0600 root:root`.
-2. **Template Strictness:** Maintain `.env.example` in Git with placeholder strings only (`AUTH_JWT_SIGNING_KEY=change-me-to-a-32-char-random-string`).
-3. **Pre-flight Validation:** Fast-fail at startup via `app.core.config.validate_production_security()`, verifying minimum entropy (32+ characters) and mandatory presence of all critical keys.
+### 4.2 Independent Secrets Categories & Rotation Protocols
 
----
+| Secret Category | Configuration Keys | Rotation Procedure | Rotation Frequency |
+| :--- | :--- | :--- | :--- |
+| **1. Database Credentials** | `DATABASE_URL` (PostgreSQL user password) | 1. Create secondary DB role password.<br/>2. Update app configuration & restart containers.<br/>3. Drop old password. | 90 days or on personnel departure. |
+| **2. Authentication Token Keys** | `AUTH_JWT_SIGNING_KEY`, `AUTH_EMAIL_LOOKUP_KEY` | 1. Introduce dual-key validation in backend.<br/>2. Sign with new key; accept old key during 10m access token TTL grace period.<br/>3. Retire old key. | 180 days. |
+| **3. Sensitive Data Encryption** | `DATA_ENCRYPTION_KEYS`, `DATA_ENCRYPTION_ACTIVE_KEY_ID` | 1. Append new key ID to `DATA_ENCRYPTION_KEYS` JSON.<br/>2. Update `DATA_ENCRYPTION_ACTIVE_KEY_ID`.<br/>3. Existing rows decrypt via legacy key ID; new rows write with active key.<br/>4. Optional background migration rewrites legacy rows. | Annual or on compromise. |
+| **4. External Provider APIs** | `OPENROUTER_API_KEY` | Generate new API key in provider console; update container secret; revoke old key. | 90 days. |
 
-## 5. Security Controls: Implemented vs. Deployment-Level Required
-
-| Security Control | Codebase Status | Deployment Configuration Required |
-| :--- | :--- | :--- |
-| **Argon2id Password Hashing** | Implemented (`app.security.auth`) | None. Native Python application control. |
-| **JWT Access & Refresh Token Rotation** | Implemented (`app.security.auth`) | Inject cryptographically strong `AUTH_JWT_SIGNING_KEY` (32+ chars). |
-| **AES-256-GCM Payload Encryption** | Implemented (`app.security.crypto`) | Inject `DATA_ENCRYPTION_KEYS` and `DATA_ENCRYPTION_ACTIVE_KEY_ID`. |
-| **Rate Limiting & Audit Logging** | Implemented (`app.main.py` middleware) | Configure internal reverse proxy to pass real client IP via `X-Forwarded-For`. |
-| **Tenant Isolation & Path Traversal Guards** | Implemented (`ArtifactStorageService`) | Mount persistent host volume at `/app/data/artifacts` with `0750` permissions. |
-| **Memory Fallback Disabled** | Implemented (`app.core.config`) | Ensure `APP_ENV=production` and `ACIS_ENABLE_MEMORY_FALLBACK=false`. |
-| **TLS 1.3 Termination & HSTS** | **Missing in current Docker** | Configure NGINX or Caddy reverse proxy with ACME certificate automation. |
-| **Non-Root Container Execution** | **Missing in current Docker** | Rewrite Dockerfiles with unprivileged users (`nextjs` 1001, `appuser` 10001). |
-| **Database Port Isolation** | **Missing in current Docker** | Remove `ports: - "5432:5432"` in Docker Compose; keep DB strictly on `acis_internal`. |
-| **Host Firewall & Port Hardening** | **Deployment-level** | Configure UFW/iptables to permit only ports 80, 443, and SSH. |
+### 4.3 KMS / HSM-Backed Protection Requirement
+For production deployments handling enterprise customer intelligence:
+- The master key protecting `DATA_ENCRYPTION_KEYS` must be protected by a **Hardware Security Module (HSM)** or managed **KMS** (AWS KMS, GCP Cloud KMS, or Vault Transit engine).
+- Plaintext data encryption keys must never be stored in persistent disk files alongside the encrypted database.

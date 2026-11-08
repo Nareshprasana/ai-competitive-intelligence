@@ -1,7 +1,7 @@
 # ACIS Production Readiness Checklist
 
 **Project:** AI Competitive Intelligence System (ACIS)  
-**Document:** Production Readiness Audit & Verification Checklist  
+**Document:** Production Readiness Audit & Verification Checklist (Audited)  
 **Target Release:** Phase 4 Production Foundation  
 **Assessment Date:** November 2026
 
@@ -21,7 +21,7 @@
 | `[x]` | Argon2id password hashing with modern salt & memory cost | Verified in `app.security.auth.hash_password` |
 | `[x]` | Short-lived JWT access tokens (10m) with asymmetric/secret validation | Verified in `app.security.auth.create_access_token` |
 | `[x]` | Refresh token rotation and single-flight invalidation | Verified in `app.security.auth.rotate_refresh_token` |
-| `[x]` | HttpOnly, Secure, and SameSite=Lax cookie issuance | Verified in `app.api.v1.endpoints.auth` & `app.core.config` |
+| `[x]` | HttpOnly, Secure, and SameSite=Strict cookie issuance | Verified in `app.api.v1.endpoints.auth` & `app.core.config` |
 | `[x]` | Mandatory multi-tenant isolation (`X-Organization-ID` + JWT check) | Verified in `app.security.auth.require_tenant_access` |
 | `[x]` | Repository-level SQL query scoping by `organization_id` | Verified in `app.repositories.*` |
 | `[x]` | AES-256-GCM encryption of sensitive database columns at rest | Verified in `app.security.crypto` & Alembic revision `0005` |
@@ -31,6 +31,7 @@
 | `[x]` | Fail-closed memory fallback policy (disabled in prod/staging) | Verified in `app.core.config.validate_production_security` |
 | `[x]` | Correlation tracking via `X-Request-ID` and audit event logging | Verified in `app.main.py` (`AuditEvent` persistence) |
 | `[ ]` | Real client IP extraction from behind trusted reverse proxy | Planned for Phase 4C (`--proxy-headers` / trusted IP subnets) |
+| `[ ]` | KMS / HSM-backed envelope key protection for `DATA_ENCRYPTION_KEYS` | Planned for Phase 4C / ADR-004 |
 | `[?]` | Multi-Factor Authentication (MFA / TOTP) requirement for admin users | Requires user decision (Post-Phase 4 roadmap item) |
 
 ---
@@ -39,11 +40,12 @@
 
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
-| `[ ]` | Edge reverse proxy (Caddy / NGINX) terminates TLS 1.3 | Planned for Phase 4C |
+| `[ ]` | Edge reverse proxy (Caddy:2.9.1 / NGINX:1.27.3) terminates TLS 1.3 | Planned for Phase 4C |
 | `[ ]` | Automated ACME certificate issuance and 60-day renewal hooks | Planned for Phase 4C (Let's Encrypt / ZeroSSL) |
 | `[ ]` | Complete elimination of public PostgreSQL port mapping (`5432`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
 | `[ ]` | Complete elimination of public backend ASGI port mapping (`8000`) | Planned for Phase 4A / 4C (Docker internal bridge only) |
-| `[ ]` | Strict HTTP security headers (HSTS, CSP, X-Frame-Options, nosniff) | Planned for Phase 4C reverse proxy configuration |
+| `[ ]` | HSTS configured (`max-age=31536000; includeSubDomains`) without auto-preload | Planned for Phase 4C / ADR-005 |
+| `[ ]` | CSP deployed in Report-Only mode during initial rollout | Planned for Phase 4C / ADR-005 |
 | `[ ]` | Host firewall (UFW) permitting only ports 80, 443, and SSH | Planned for Phase 4F host provisioning |
 | `[?]` | Cloudflare edge proxy / DDoS protection layer integration | Requires user decision (Free tier Cloudflare recommended) |
 
@@ -54,7 +56,9 @@
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
 | `[ ]` | Backend container builds as multi-stage unprivileged `appuser` (10001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.backend`) |
+| `[ ]` | Backend base image pinned to `python:3.11.11-slim-bookworm` | Planned for Phase 4A / ADR-006 |
 | `[ ]` | Frontend container builds as multi-stage unprivileged `nextjs` (1001) | Planned for Phase 4A (`infrastructure/docker/Dockerfile.frontend`) |
+| `[ ]` | Frontend base image pinned to Node.js LTS `node:22.12.0-alpine3.20` | Planned for Phase 4A / ADR-001 |
 | `[ ]` | Frontend utilizes Next.js 14 `output: 'standalone'` mode (~180MB) | Planned for Phase 4A (`frontend/next.config.js`) |
 | `[ ]` | Backend ASGI runs production Gunicorn/Uvicorn multi-worker process | Planned for Phase 4A (`gunicorn -k uvicorn.workers.UvicornWorker`) |
 | `[ ]` | Explicit CPU and memory limits on all Docker Compose services | Planned for Phase 4A (`deploy.resources.limits`) |
@@ -63,12 +67,19 @@
 
 ---
 
-## 4. Database Reliability & Disaster Recovery
+## 4. Durable Workflows & Database Reliability
 
 | Status | Verification Item | Implementation Target |
 | :---: | :--- | :--- |
 | `[x]` | PostgreSQL 18 schema fully managed under Alembic revisions 0001–0005 | Verified in `backend/alembic/versions/` |
 | `[x]` | Loop-aware connection pooling preventing dead loop leaks | Verified in `backend/app/core/database.py` (Commit `f658533`) |
+| `[x]` | LangGraph state checkpointing configured with `AsyncPostgresSaver` | Verified in `app.services.research_service` |
+| `[ ]` | Transactional `research_jobs` queue table (Alembic migration 0006) | Planned for Phase 4B / ADR-002 |
+| `[ ]` | Dedicated asynchronous research worker process (`app.workers.research_worker`) | Planned for Phase 4B / ADR-002 |
+| `[ ]` | Worker claiming using PostgreSQL `FOR UPDATE SKIP LOCKED` | Planned for Phase 4B / ADR-003 |
+| `[ ]` | Worker heartbeat loop (15s) and crash reclamation supervisor | Planned for Phase 4B / ADR-003 |
+| `[ ]` | LangGraph checkpoint resumption on retried / recovered jobs | Planned for Phase 4B / ADR-003 |
+| `[ ]` | Frontend status polling against `GET /api/v1/research/{id}` | Planned for Phase 4B |
 | `[ ]` | Automated database migration execution on container startup | Planned for Phase 4B entrypoint script |
 | `[ ]` | Automated daily compressed logical backups (`pg_dump -Fc`) | Planned for Phase 4B (`infrastructure/scripts/backup-database.sh`) |
 | `[ ]` | Backup encryption at rest via AES-256 / GPG before transport | Planned for Phase 4B backup pipeline |
@@ -88,7 +99,7 @@
 | `[ ]` | Distinct Liveness (`/health`) and Readiness (`/health/readiness`) probes | Planned for Phase 4D API update |
 | `[ ]` | Prometheus metrics endpoint (`/metrics`) exposing latency & pool stats | Planned for Phase 4D (`prometheus-fastapi-instrumentator`) |
 | `[ ]` | Docker container log rotation limits (`max-size: 50m`, `max-file: 5`) | Planned for Phase 4D Docker daemon / compose setting |
-| `[ ]` | Grafana dashboard monitoring API error spikes and LLM run durations | Planned for Phase 4D monitoring setup |
+| `[ ]` | Grafana dashboard monitoring API error spikes and queue latencies | Planned for Phase 4D monitoring setup |
 
 ---
 
@@ -102,14 +113,14 @@
 | `[ ]` | Automated GitHub Actions CI workflow executing test matrix on PR | Planned for Phase 4E (`.github/workflows/ci.yml`) |
 | `[ ]` | Automated secret scanning in pipeline (`gitleaks` / `trufflehog`) | Planned for Phase 4E (`.github/workflows/security-scan.yml`) |
 | `[ ]` | Container image vulnerability scanning (`trivy`) prior to registry push | Planned for Phase 4E (`.github/workflows/release.yml`) |
-| `[ ]` | Tagged immutable Docker image publishing to private container registry | Planned for Phase 4E release pipeline |
+| `[ ]` | Pinned immutable SHA256 container digests in release deployment manifests | Planned for Phase 4E / ADR-006 |
 | `[ ]` | Automated pre-migration snapshot and rollback validation script | Planned for Phase 4E deployment script |
 
 ---
 
 ## 7. Operational Decisions Required
 
-1. **Hosting Provider Selection:** Confirm deployment on **Hetzner Cloud CPX31 (~$15.50/mo)** or **DigitalOcean Droplet (~$53/mo)** for Phase 4 launch.
+1. **Hosting Provider Selection:** Confirm deployment on **Hetzner Cloud CPX31 (~$20–$25/mo fully loaded)** or **DigitalOcean Droplet (~$60/mo)** for Phase 4 launch.
 2. **Offsite Backup Storage Target:** Confirm target object store for encrypted daily backups (Cloudflare R2 recommended for zero egress fees, or AWS S3 Standard).
 3. **Domain Name & DNS Provisioning:** Select primary domain (e.g. `acis.company.com` or `app.acis.ai`) and confirm DNS nameserver management via Cloudflare.
-4. **LangGraph Execution Concurrency:** Approve Stage 1 backgrounding strategy (`FastAPI BackgroundTasks` + polling) for long-running live LLM research workflows.
+4. **Next.js Modernization Timeline:** Approve retaining Next.js 14.2.17 on Node.js 22 LTS for Phase 4A foundation, scheduling Next.js 15/16 migration as a distinct post-Phase 4 milestone.
