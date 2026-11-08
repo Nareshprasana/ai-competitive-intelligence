@@ -1,54 +1,61 @@
 # ACIS Architecture Decision Records (ADRs)
 
 **Project:** AI Competitive Intelligence System (ACIS)  
-**Document:** Architecture Decision Records (ADR-001 through ADR-006)  
+**Document:** Architecture Decision Records (ADR-001 through ADR-009)  
 **Target Release:** Phase 4 Production Foundation  
-**Status:** Approved Architecture Decisions  
+**Status:** Validated Architecture Specification  
 **Date:** November 2026
 
 ---
 
-## ADR-001: Frontend Runtime (Node.js LTS) and Next.js Upgrade Strategy
+## ADR-001: Frontend Runtime (Node.js LTS) and Next.js Framework Modernization Strategy
 
 ### Status: Accepted
 ### Context
-The ACIS frontend currently uses Next.js 14.2.17 with React 18.3.1. The initial Phase 4 Stage 1 draft proposed Node.js 20-slim. However, Node.js 20 reached official End-of-Life (EOL) on April 30, 2026. Running an EOL runtime in production introduces unpatched OpenSSL/V8 vulnerabilities and fails security compliance audits.
+The existing ACIS frontend is built on Next.js 14.2.17 and React 18.3.1. In late 2026, Next.js 14 is outside official maintenance and support policies. Furthermore, previous drafts mentioned Node.js 20 (which reached official End-of-Life on April 30, 2026) and Node.js 22 (which is entering maintenance in late 2026 and reaches EOL in April 2027). Running an unsupported framework or runtime in production creates serious security compliance violations, unpatched V8/OpenSSL risks, and library deprecation blockers.
 
-Next.js framework support status in late 2026:
-- Next.js 14.2.x: Maintenance mode. Compatible with Node.js 18.17+, 20, 22, and 24.
-- Next.js 15.x: Current LTS framework version, introduces React 19, asynchronous request APIs (`await cookies()`, `await headers()`), uncached `fetch` by default, and Turbopack.
-- Next.js 16.x: Latest release, stabilizes Partial Prerendering (PPR) and Server Actions caching.
+Official Node.js Release Lifecycle Status:
+- **Node.js 26:** Released April 2026; Current/LTS transition October 2026. **Preferred primary long-term runtime.**
+- **Node.js 24:** Active LTS (October 2025 – October 2027; EOL April 2028). Conservative, thoroughly tested alternative.
+- **Node.js 22:** Maintenance LTS (EOL April 30, 2027). **Explicitly disqualified as the primary long-term recommendation.**
+- **Node.js 20:** End-of-Life (April 30, 2026). Strictly prohibited.
+
+Next.js Framework Modernization Matrix:
+- **Next.js 16:** **Preferred modernization target.** Features full React 19 stabilization, Partial Prerendering (PPR), Turbopack production builds, and advanced Server Actions caching.
+- **Next.js 15:** Intermediate milestone if upstream peer dependencies temporarily block direct Next.js 16 adoption. Introduces async request headers (`await cookies()`, `await headers()`), uncached `fetch` by default, and React 19.
 
 ### Decision
-1. **Container Runtime Selection:** Pin the production container runtime to **Node.js 22 LTS (Active/Maintenance)** or **Node.js 24 LTS (Active LTS)** using the official Alpine image (`node:22.12.0-alpine3.20` or `node:24.0.0-alpine`).
-2. **Framework Staging Strategy:** 
-   - **Phase 4A Initial Deployment:** Retain Next.js 14.2.17 running under Node.js 22/24 LTS with `output: 'standalone'`. Empirically verified to build and pass all 28 frontend tests without breaking changes.
-   - **Post-Phase 4 Framework Migration:** Schedule a dedicated, isolated migration workstream for upgrading Next.js 14 to Next.js 15/16. This decouples infrastructure deployment from framework breaking changes (async cookie migration, React 19 peer dependency audits).
+1. **Separation of Architectural Gates:**
+   - **Gate A (Temporary Local Infrastructure Testing — Phase 4A):** For initial Docker Compose packaging and containerization in Phase 4A only, Next.js 14.2.17 is temporarily permitted to run on **Node.js 24 LTS or Node.js 26 Alpine** (`node:24-alpine` / `node:26-alpine`) in `output: 'standalone'` mode. This allows local container testing without conflating infrastructure changes with code refactoring.
+   - **Gate B (Mandatory Production Deployment Gate):** **Next.js 14 is strictly disqualified from production deployment.** Production deployment is blocked until the frontend is modernized to **Next.js 16** (or Next.js 15 as an intermediate step if technically required) with **React 19**, and verified across all unit, integration, and E2E suites.
+2. **Framework Migration Requirements:**
+   - Audit and refactor asynchronous request handling (`cookies()`, `headers()` as Promises).
+   - Update `fetch` caching semantics from Next.js 14 default caching to Next.js 15/16 explicit caching.
+   - Validate React 19 compatibility across all custom UI components and Lucide icons.
+   - Preserve all existing authentication flows, CSRF token handling, HttpOnly cookie reception, tenant header propagation, and Playwright/Node test suites.
 
 ### Consequences
-- **Positive:** Immediately eliminates EOL runtime risk without risking application code regressions during containerization.
-- **Negative:** Requires a scheduled follow-up task to modernize to Next.js 15/16 before Next.js 14 upstream security maintenance concludes.
+- **Positive:** Guarantees that production systems run only on supported, actively patched software; eliminates premature tech debt.
+- **Negative:** Establishes a mandatory frontend modernization workstream before commercial production deployment.
 
 ---
 
-## ADR-002: Durable LangGraph Execution Architecture
+## ADR-002: Durable LangGraph Execution Architecture (PostgreSQL Transactional Queue)
 
 ### Status: Accepted
 ### Context
-Currently, `research_service.run_research()` executes synchronously inside the FastAPI HTTP route handler. In mock mode, this completes in <500ms. In production with live LLMs (OpenRouter/DeepSeek) and web scrapers, a complete research workflow requires 4–8 LLM round trips and 6–10 search/extraction steps, taking **30 to 120+ seconds**.
-
-Executing this synchronously inside an HTTP request causes:
+The current ACIS research workflow executes synchronously inside the FastAPI HTTP route handler (`research_service.run_research`). With live LLM providers (OpenRouter/DeepSeek) and web scrapers, a complete research run takes **30 to 120+ seconds**. Synchronous execution causes:
 1. Reverse proxy HTTP gateway timeouts (typically 60s).
 2. Browser connection timeouts.
 3. Thread/process starvation in the ASGI server.
 4. Total loss of in-flight research state if a client disconnects or container restarts.
 
-FastAPI `BackgroundTasks` was evaluated but rejected as an architectural sole solution because tasks reside in volatile process memory: an unhandled exception, SIGTERM during deployment, or OOM restart permanently destroys queued and running jobs without recovery.
+FastAPI `BackgroundTasks` executes in ephemeral process memory: an unhandled exception, OOM restart, or deployment SIGTERM permanently destroys queued and running jobs without recovery.
 
 ### Decision
-Implement a **Durable Asynchronous Worker Architecture** using a **PostgreSQL-backed transactional job queue** and an asynchronous worker process:
-1. API handler `POST /api/v1/research` creates a persistent `research_jobs` record within the same PostgreSQL transaction as `research_records`, immediately returning HTTP 202 Accepted with `research_id` and `job_id`.
-2. A separate background worker process (`python -m app.workers.research_worker`) claims jobs using PostgreSQL ACID row-level locking (`SELECT ... FOR UPDATE SKIP LOCKED`).
+Implement a **Durable Asynchronous Worker Architecture** using a **PostgreSQL-backed transactional queue (`research_jobs`)** and a dedicated worker process (`python -m app.workers.research_worker`):
+1. `POST /api/v1/research` inserts a `research_records` row and a `research_jobs` row (`status = 'pending'`) in a single ACID transaction, returning HTTP 202 Accepted with `research_id` and `job_id` in <100ms.
+2. A separate background worker process claims jobs using `SELECT ... FOR UPDATE SKIP LOCKED`.
 3. The worker executes the LangGraph `StateGraph` workflow, persisting incremental node checkpoints via `AsyncPostgresSaver`.
 4. The frontend polls `GET /api/v1/research/{id}` for state updates until the terminal state (`completed` or `failed`) is reached.
 
@@ -57,73 +64,70 @@ Implement a **Durable Asynchronous Worker Architecture** using a **PostgreSQL-ba
 - **RabbitMQ:** Rejected. Extreme operational complexity and maintenance overhead for current scale.
 
 ### Consequences
-- **Positive:** Zero new infrastructure dependencies (reuses PostgreSQL 18); 100% ACID consistency between job state and research state; survives container crashes.
+- **Positive:** Zero new broker infrastructure; 100% ACID consistency between job state and research state; survives container crashes.
 - **Negative:** Requires implementing worker claiming logic, heartbeats, and queue tables.
 
 ---
 
-## ADR-003: PostgreSQL-Backed Job Lifecycle, Heartbeats, and Crash Recovery
+## ADR-003: PostgreSQL-Backed Job Lifecycle, Heartbeats, and Stale Lease Recovery
 
 ### Status: Accepted
 ### Context
-To guarantee durability without external broker software, the PostgreSQL job queue must handle concurrency, worker crashes, duplicate execution prevention, and cancellation.
+A durable queue without external brokers must reliably manage concurrency, worker heartbeats, crash recovery, and bounded retries.
 
 ### Decision
-Define a robust job table and lifecycle state machine:
-
-#### Schema (`research_jobs`):
-- `id` (UUID, Primary Key)
-- `research_id` (VARCHAR, Foreign Key to `research_records`, Indexed)
-- `organization_id` (VARCHAR, Indexed for Tenant Isolation)
-- `status` (`pending`, `running`, `completed`, `failed`, `cancelled`)
-- `idempotency_key` (VARCHAR, Unique Index per tenant + hash)
-- `worker_id` (VARCHAR, identifying claiming worker)
-- `attempt_count` (INT, default 0)
-- `max_attempts` (INT, default 3)
-- `heartbeat_at` (TIMESTAMPTZ, updated every 15s)
-- `scheduled_at` (TIMESTAMPTZ, default `NOW()`)
-- `created_at`, `started_at`, `completed_at` (TIMESTAMPTZ)
-- `error_details` (JSONB)
-
-#### Concurrency & Claiming:
-```sql
-WITH next_job AS (
-  SELECT id FROM research_jobs
-  WHERE status = 'pending' AND scheduled_at <= NOW()
-  ORDER BY created_at ASC
-  LIMIT 1
-  FOR UPDATE SKIP LOCKED
-)
-UPDATE research_jobs
-SET status = 'running',
-    worker_id = :worker_id,
-    attempt_count = attempt_count + 1,
-    started_at = NOW(),
-    heartbeat_at = NOW()
-FROM next_job
-WHERE research_jobs.id = next_job.id
-RETURNING research_jobs.*;
-```
-
-#### Crash Recovery & Stale Job Reclamation:
-A supervisor routine runs every 60 seconds:
-```sql
-UPDATE research_jobs
-SET status = CASE WHEN attempt_count >= max_attempts THEN 'failed' ELSE 'pending' END,
-    worker_id = NULL,
-    error_details = jsonb_build_object('error', 'Worker crashed or heartbeat timed out')
-WHERE status = 'running'
-  AND heartbeat_at < NOW() - INTERVAL '90 seconds';
-```
-
-#### LangGraph Checkpoint Resumption:
-When a reclaimed job is retried by a worker, the worker initializes LangGraph with the existing `thread_id` (`research_id`). `AsyncPostgresSaver` loads the latest saved checkpoint, allowing the pipeline to resume from the last successful node rather than restarting from scratch.
-
-#### Cancellation:
-Between each LangGraph node execution, the worker checks if `status == 'cancelled'`. If so, execution stops cleanly, emitting an `AuditEvent`.
+1. **Schema Definition (`research_jobs`):**
+   - `id` (UUID, Primary Key)
+   - `research_id` (VARCHAR, Foreign Key to `research_records`, Indexed)
+   - `organization_id` (VARCHAR, Indexed for Tenant Isolation)
+   - `status` (`pending`, `running`, `completed`, `failed`, `cancelled`)
+   - `worker_id` (VARCHAR, identifying claiming worker)
+   - `fence_token` (BIGINT, monotonic lease counter)
+   - `attempt_count` (INT, default 0)
+   - `max_attempts` (INT, default 3)
+   - `lease_expires_at` (TIMESTAMPTZ, updated via heartbeats)
+   - `scheduled_at` (TIMESTAMPTZ, default `NOW()`)
+   - `created_at`, `started_at`, `completed_at` (TIMESTAMPTZ)
+   - `error_details` (JSONB)
+   - `idempotency_key` (VARCHAR, Unique Index per tenant + hash)
+2. **Atomic Claiming with Lease Ownership:**
+   ```sql
+   WITH next_job AS (
+     SELECT id FROM research_jobs
+     WHERE status = 'pending' AND scheduled_at <= NOW()
+     ORDER BY created_at ASC
+     LIMIT 1
+     FOR UPDATE SKIP LOCKED
+   )
+   UPDATE research_jobs
+   SET status = 'running',
+       worker_id = :worker_id,
+       fence_token = fence_token + 1,
+       attempt_count = attempt_count + 1,
+       started_at = NOW(),
+       lease_expires_at = NOW() + INTERVAL '30 seconds'
+   FROM next_job
+   WHERE research_jobs.id = next_job.id
+   RETURNING research_jobs.*;
+   ```
+3. **Heartbeat & Lease Renewal:** The worker maintains an asynchronous heartbeat loop every 10–15 seconds:
+   ```sql
+   UPDATE research_jobs
+   SET lease_expires_at = NOW() + INTERVAL '30 seconds'
+   WHERE id = :job_id AND worker_id = :worker_id AND fence_token = :fence_token;
+   ```
+4. **Stale Lease Reclamation:** A supervisor task runs every 30 seconds:
+   ```sql
+   UPDATE research_jobs
+   SET status = CASE WHEN attempt_count >= max_attempts THEN 'failed' ELSE 'pending' END,
+       worker_id = NULL,
+       scheduled_at = NOW() + (INTERVAL '5 seconds' * attempt_count),
+       error_details = jsonb_build_object('error', 'Worker lease expired; reclaimed for retry')
+   WHERE status = 'running' AND lease_expires_at < NOW();
+   ```
 
 ### Consequences
-- **Positive:** High resilience; idempotent execution; transparent progress tracking; zero lost jobs on worker restarts.
+- **Positive:** Bounded retries with backoff; automatic self-healing after worker container crashes.
 
 ---
 
@@ -131,50 +135,44 @@ Between each LangGraph node execution, the worker checks if `status == 'cancelle
 
 ### Status: Accepted
 ### Context
-ACIS handles confidential enterprise intelligence and requires four distinct categories of secrets:
+ACIS handles confidential enterprise intelligence across four distinct categories of secrets:
 1. Database credentials (`DATABASE_URL`).
 2. Authentication token signing keys (`AUTH_JWT_SIGNING_KEY`, `AUTH_EMAIL_LOOKUP_KEY`).
 3. Sensitive data encryption keys (`DATA_ENCRYPTION_KEYS`, `DATA_ENCRYPTION_ACTIVE_KEY_ID`).
 4. External provider API keys (`OPENROUTER_API_KEY`).
 
-Exposing secrets in Dockerfiles, Git, or world-readable files compromises the entire tenant security boundary.
-
 ### Decision
-1. **Separation of Concerns:** Each category of secret must be managed independently with dedicated rotation procedures.
-2. **Sensitive Data Key Protection:** For production environments, the master key protecting `DATA_ENCRYPTION_KEYS` (AES-256-GCM) must be secured by an external **KMS (Key Management Service)**, **Hardware Security Module (HSM)**, or **HashiCorp Vault**. Application containers receive decrypted envelope keys into memory only at startup.
+1. **Separation of Concerns:** Each category of secret is managed independently with dedicated rotation procedures.
+2. **KMS / HSM Key Protection Requirement:** For production environments, the master key protecting `DATA_ENCRYPTION_KEYS` (AES-256-GCM) must be secured by an external **KMS (Key Management Service)**, **Hardware Security Module (HSM)**, or **HashiCorp Vault**. Application containers receive decrypted envelope keys into memory only at startup.
 3. **Container Secret Injection:**
-   - **Initial Host VPS Deployment:** Use Docker Compose secrets or protected host environment files (`/opt/acis/.env.production`) restricted to `chmod 0600 root:root`.
+   - **Initial Host VPS Deployment:** Docker Compose secrets or protected host environment files (`/opt/acis/.env.production`) restricted to `chmod 0600 root:root`.
    - **Managed Cloud Deployment:** Transition to native cloud secret managers (AWS Secrets Manager, GCP Secret Manager, or Infisical).
 4. **Zero-Secret Invariant:** No secret values may ever be committed to Git, baked into container images, or output in application logs.
 
-### Consequences
-- **Positive:** Defense-in-depth; meets SOC 2 and ISO 27001 encryption key management controls.
-
 ---
 
-## ADR-005: TLS 1.3, Cookie Policy (`SameSite=Strict`), and Ingress Security Headers
+## ADR-005: Cookie Security, CSRF Defense-in-Depth, and Ingress Security Headers
 
 ### Status: Accepted
 ### Context
-Transport security and edge ingress policies must prevent cross-site request forgery, clickjacking, protocol downgrades, and content sniffing.
+Cookie security and CSRF defense must be rigorous and grounded in defense-in-depth principles.
 
 ### Decision
-1. **Cookie Security Policy:** All refresh token cookies must enforce:
-   - `HttpOnly: true` (inaccessible to JavaScript).
-   - `Secure: true` (transmitted only over HTTPS).
-   - `SameSite: Strict` (preventing cross-site leakage on any third-party navigation).
-   *Rationale:* Because the reverse proxy routes both frontend (`/`) and backend (`/api/v1`) under the exact same origin (e.g. `https://acis.example.com`), `SameSite=Strict` provides maximum protection without breaking legitimate same-site API interactions.
+1. **Cookie Defense-in-Depth (`SameSite=Strict`):**
+   - Refresh token cookies enforce: `HttpOnly: true`, `Secure: true`, and `SameSite: Strict`.
+   - **Explicit Clarification:** `SameSite=Strict` is a **defense-in-depth layer, NOT a replacement for CSRF protection**. ACIS mandates:
+     - Strict `X-CSRF-Token` header validation for all state-changing API endpoints.
+     - Strict `Origin` and `Referer` header validation against `BACKEND_CORS_ORIGINS`.
+     - Refresh token rotation on every issuance.
+     - Replay detection and immediate session revocation if an expired or revoked token is reused.
 2. **TLS 1.3 Termination:** The edge proxy terminates TLS using modern ciphers, mandating TLS 1.3 (with TLS 1.2 fallback).
 3. **HSTS Preload Policy:** 
    - **Do NOT enable HSTS preload automatically.**
    - Initial production will set: `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
    - The `preload` directive will only be added after 90 days of stable HTTPS operation across the root domain and all subdomains, following formal submission to `hstspreload.org`.
 4. **CSP Strategy (Report-Only First):**
-   - Deploy `Content-Security-Policy-Report-Only` during staging and the first 30 days of production to identify any CSP violations in Next.js dynamic script injection or styling.
+   - Deploy `Content-Security-Policy-Report-Only` during staging and the first 30 days of production.
    - Enforce strict blocking `Content-Security-Policy` only after report logs confirm zero false positives.
-
-### Consequences
-- **Positive:** Prevents accidental lockout from premature HSTS preloading; avoids UI breakage from overly aggressive CSP rules while guaranteeing maximum CSRF immunity.
 
 ---
 
@@ -182,19 +180,82 @@ Transport security and edge ingress policies must prevent cross-site request for
 
 ### Status: Accepted
 ### Context
-Using `:latest` or broad minor tags (e.g. `node:20-slim`, `python:3.11-slim`) introduces non-deterministic builds, breaking changes on rebuilds, and unexpected vulnerabilities.
+Using `:latest` or unpinned tags creates non-deterministic builds and security vulnerabilities.
 
 ### Decision
-1. **Strict Tag Pinning:** All production container images must be pinned to explicit patch versions and Debian/Alpine release codenames:
-   - **Backend:** `python:3.11.11-slim-bookworm` (or `3.12.8-slim-bookworm`).
-   - **Frontend:** `node:22.12.0-alpine3.20` (or `node:24.0.0-alpine`).
-   - **PostgreSQL:** `ankane/pgvector:v0.8.0-pg18` or `postgres:18.0-bookworm` with compiled `pgvector 0.8.0`.
-   - **Reverse Proxy:** `caddy:2.9.1-alpine` or `nginx:1.27.3-alpine`.
-2. **Digest Verification:** Production release manifests in CI/CD will pin immutable SHA-256 image digests (`image@sha256:...`).
+1. **Strict Tag Pinning:** Production container images must be pinned to explicit patch versions and Debian/Alpine release codenames:
+   - **Backend & Worker:** `python:3.12-slim-bookworm` or `python:3.11-slim-bookworm`.
+   - **Frontend:** `node:24-alpine` (conservative) or `node:26-alpine` (preferred long-term).
+   - **PostgreSQL:** `pgvector/pgvector:0.8.0-pg18` (see ADR-009).
+   - **Reverse Proxy:** `caddy:2.9-alpine` or `nginx:1.27-alpine`.
+2. **Digest Verification Policy:** In production release manifests, images must be pinned to immutable `@sha256:...` digests discovered dynamically during the CI/CD build pipeline (never invented arbitrary hashes).
 3. **Vulnerability Patch Policy:**
    - Base images scanned weekly via Trivy in GitHub Actions.
    - Patch-level security updates reviewed and deployed on a monthly cadence.
    - Critical CVEs (CVSS >= 9.0) trigger an expedited out-of-band rebuild and redeployment within 48 hours.
 
-### Consequences
-- **Positive:** 100% reproducible builds; immunity to upstream breaking updates; automated vulnerability tracking.
+---
+
+## ADR-007: Fencing Tokens, Stale Worker Overwrite Prevention, and At-Least-Once LangGraph Semantics
+
+### Status: Accepted
+### Context
+In distributed background execution, network pauses, long garbage collection pauses, or temporary worker stalls can cause a worker's lease to expire while the worker is still running. The supervisor may reclaim the job and assign it to a second worker. If the original ("zombie") worker recovers and attempts to write results or checkpoints, it could overwrite newer, valid state.
+
+Furthermore, distributed workflow execution cannot promise *exactly-once* execution. Network timeouts between the worker and external LLM APIs (OpenRouter/DeepSeek) mean that a node may be partially executed before an interruption occurs.
+
+### Decision
+1. **At-Least-Once Execution with Idempotent Effects:**
+   - ACIS explicitly designs for **at-least-once execution with idempotent effects**, not an unrealistic exactly-once promise.
+   - LangGraph nodes must check existing state/checkpoints before dispatching external side effects (e.g. LLM API calls, web searches, artifact writes). If an output artifact or step result already exists for the current node execution, the node reuses the existing result instead of incurring duplicate costs or side effects.
+2. **Monotonic Fencing Tokens:**
+   - Every job claim or reclamation increments the integer `fence_token` on `research_jobs`.
+   - When a worker updates job progress, saves checkpoints, or marks completion, the database query MUST include:
+     ```sql
+     UPDATE research_jobs
+     SET status = :status, error_details = :error_details, completed_at = NOW()
+     WHERE id = :job_id AND fence_token = :worker_fence_token;
+     ```
+   - If the update affects 0 rows, the worker detects that its lease was revoked and its fence token superseded. The worker immediately aborts execution without modifying research records or artifact storage.
+3. **LangGraph Checkpoint Resumption:**
+   - Checkpoints are saved per node using `AsyncPostgresSaver`.
+   - When a recovered job is executed, LangGraph loads the checkpoint corresponding to `thread_id = f"{org_id}:{research_id}"`, resuming from the last successfully committed node.
+
+---
+
+## ADR-008: Validated Organization Authorization vs. Client-Supplied Identifiers
+
+### Status: Accepted
+### Context
+In multi-tenant architectures, relying on a client-supplied HTTP header (such as `X-Organization-ID`) to determine tenant identity is a critical security vulnerability if not strictly validated against the authenticated user's credentials.
+
+### Decision
+1. **Client Header as Context Selector Only:**
+   - A client-supplied `X-Organization-ID` **never independently establishes tenant identity or authorization**.
+   - It is strictly an optional *tenant context selector* used when an authenticated user belongs to multiple organizations.
+2. **Mandatory Authorization Validation:**
+   - The effective organization ID is derived from the validated JWT token (`org_id` claim) or explicitly verified against the user's active organization memberships in PostgreSQL (`user_organizations` table).
+   - If `X-Organization-ID` is provided, the backend validates that the authenticated user is an active member of that specific organization. If unauthorized, the request is rejected with HTTP 403 Forbidden.
+3. **Cross-Tenant Enumeration Prevention:**
+   - Any attempt to access a specific resource (e.g., `GET /api/v1/research/{id}`) belonging to a different tenant returns **HTTP 404 Not Found** (not 403), preventing attackers from enumerating valid resource IDs across organizations.
+4. **Universal 8-Layer Enforcement:** Tenant scoping is enforced at Auth Middleware, API Routes, Service Facades, Database Repositories (`WHERE organization_id = :org_id`), Queue Operations, Checkpoint Access, Artifact Storage (`/data/artifacts/{org_id}/`), and Audit Logging.
+
+---
+
+## ADR-009: PostgreSQL 18 Official `pgvector/pgvector` Image and Volume Mount Conventions
+
+### Status: Accepted
+### Context
+Previous drafts referenced `ankane/pgvector:v0.8.0-pg18`. The official, actively maintained image repository for pgvector is `pgvector/pgvector`. Furthermore, PostgreSQL 18 containers enforce strict internal directory layout rules. Mounting a Docker named volume directly to `/var/lib/postgresql/data` when the image expects a subpath (or vice versa) causes accidental anonymous volume creation, permissions collisions, or total data invisibility when a container is recreated.
+
+### Decision
+1. **Official Image Pinning:**
+   - Use the official upstream pgvector repository: **`pgvector/pgvector:pg18`** (pinned to specific patch/digest, e.g. `pgvector/pgvector:0.8.0-pg18`).
+2. **Explicit PGDATA Directory & Volume Mount:**
+   - **Named Volume:** `acis_postgres_data`
+   - **Container Mount Path:** `/var/lib/postgresql/data`
+   - **Explicit Environment Variable:** `PGDATA=/var/lib/postgresql/data/pgdata`
+   *Rationale:* Setting `PGDATA` to a subdirectory (`/pgdata`) within the mount point allows PostgreSQL to initialize its cluster cleanly, leaving mount-level filesystem artifacts (e.g., `lost+found`) untouched and preventing permissions conflicts.
+3. **Authentication & Hardening:**
+   - Enforce SCRAM-SHA-256 via `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`.
+   - Private network isolation: PostgreSQL is strictly bound to `acis_internal` bridge network with zero host port exposure.

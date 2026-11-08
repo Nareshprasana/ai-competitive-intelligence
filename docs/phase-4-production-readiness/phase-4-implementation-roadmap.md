@@ -1,7 +1,7 @@
 # ACIS Phase 4 Implementation Roadmap
 
 **Project:** AI Competitive Intelligence System (ACIS)  
-**Document:** Phase 4 Workstreams, Sequencing & Verification Criteria (Audited)  
+**Document:** Phase 4 Workstreams, Sequencing & Implementation Entry Criteria (Audited)  
 **Target Release:** Phase 4 Production Infrastructure & Deployment  
 **Status:** Implementation Blueprint & Execution Roadmap
 
@@ -33,8 +33,8 @@ flowchart LR
 ### Phase 4A: Production Containerization & Local Compose Validation
 - **Objective:** Convert prototype development Dockerfiles into production-hardened, multi-stage, unprivileged container images and validate local composition with pinned LTS runtimes.
 - **Scope:**
-  - Build multi-stage `Dockerfile.backend` on `python:3.11.11-slim-bookworm` running as non-root `appuser` (UID 10001) with production `gunicorn` / `uvicorn` workers.
-  - Build multi-stage `Dockerfile.frontend` on `node:22.12.0-alpine3.20` using Next.js `output: 'standalone'` running as non-root `nextjs` (UID 1001).
+  - Build multi-stage `Dockerfile.backend` on `python:3.12-slim-bookworm` (or `python:3.11-slim-bookworm`) running as non-root `appuser` (UID 10001) with production `gunicorn` / `uvicorn` workers.
+  - Build multi-stage `Dockerfile.frontend` on `node:26-alpine` (preferred) or `node:24-alpine` (conservative alternative) using Next.js `output: 'standalone'` running as non-root `nextjs` (UID 1001). (Node.js 22 is explicitly disqualified as primary long-term runtime).
   - Update `docker-compose.yml` (and production overlay `docker-compose.prod.yml`) with healthchecks, persistent volumes, internal networks, and resource limits.
 - **Dependencies:** Formal acceptance of Phase 3.3 (Commit `f658533`) and ADR-001/ADR-006.
 - **Files to Modify/Create:**
@@ -55,13 +55,13 @@ flowchart LR
 ### Phase 4B: Production Database, Durable Worker & Persistent Storage
 - **Objective:** Establish production-grade PostgreSQL 18 with persistent volume mounts, implement the durable PostgreSQL job queue (`research_jobs`), launch the dedicated research worker process, and deploy backup automation scripts.
 - **Scope:**
-  - Configure PostgreSQL 18 container with pinned `ankane/pgvector:v0.8.0-pg18`, `scram-sha-256` authentication, and volume persistence (`acis_postgres_data`).
-  - Create Alembic migration `0006_research_jobs.py` for transactional queue table (`id`, `research_id`, `organization_id`, `status`, `heartbeat_at`, `idempotency_key`).
-  - Implement worker process `app.workers.research_worker` with `SELECT ... FOR UPDATE SKIP LOCKED` claim loop and `AsyncPostgresSaver` checkpoint resumption.
+  - Configure PostgreSQL 18 container with pinned `pgvector/pgvector:0.8.0-pg18`, `scram-sha-256` authentication, volume persistence (`acis_postgres_data`), and explicit `PGDATA=/var/lib/postgresql/data/pgdata`.
+  - Create Alembic migration `0006_research_jobs.py` for transactional queue table (`id`, `research_id`, `organization_id`, `status`, `worker_id`, `fence_token`, `attempt_count`, `max_attempts`, `lease_expires_at`, `idempotency_key`, `error_details`).
+  - Implement worker process `app.workers.research_worker` with `SELECT ... FOR UPDATE SKIP LOCKED` claim loop, fencing token validation on writes, and `AsyncPostgresSaver` checkpoint resumption.
   - Create pre-startup migration entrypoint (`alembic upgrade head`) with fail-fast validation.
   - Develop and test `backup-database.sh` script (compressed `pg_dump -Fc`, SHA-256 checksums, AES-256/GPG encryption).
   - Verify artifact filesystem persistence (`acis_artifacts_data`) and permissions.
-- **Dependencies:** Completion of Phase 4A, ADR-002, and ADR-003.
+- **Dependencies:** Completion of Phase 4A, ADR-002, ADR-003, ADR-007, and ADR-009.
 - **Files to Modify/Create:**
   - `backend/alembic/versions/0006_research_jobs.py`
   - `backend/app/workers/research_worker.py`
@@ -74,20 +74,21 @@ flowchart LR
 - **Acceptance Criteria:**
   - `POST /api/v1/research` enqueues job and returns HTTP 202 in <100ms.
   - Background worker claims job, runs LangGraph, saves checkpoints, and completes research without holding HTTP connections.
+  - Stale worker writes with mismatched `fence_token` are rejected (0 rows updated), preventing zombie overwrites.
   - Simulated worker SIGKILL during execution results in clean job reclamation and checkpoint resumption upon restart.
   - Automated backup script creates encrypted dump and verifies SHA-256 checksum.
 
 ---
 
 ### Phase 4C: Reverse Proxy, TLS Termination & Network Hardening
-- **Objective:** Deploy edge reverse proxy (Caddy 2.9.1 or NGINX 1.27.3) with TLS 1.3, strict security headers (CSP Report-Only, HSTS without auto-preload), and total isolation of internal database and application ports.
+- **Objective:** Deploy edge reverse proxy (Caddy 2.9-alpine or NGINX 1.27-alpine) with TLS 1.3, strict security headers (CSP Report-Only, HSTS without auto-preload), and total isolation of internal database and application ports.
 - **Scope:**
   - Configure reverse proxy routing: `/` to Next.js (port 3000), `/api/*` to FastAPI (port 8000).
   - Enforce TLS 1.3, HSTS (`Strict-Transport-Security: max-age=31536000; includeSubDomains` without preload), CSP Report-Only, and anti-sniffing headers.
-  - Enforce `SameSite=Strict`, `HttpOnly`, and `Secure` on all refresh token cookies.
+  - Enforce `SameSite=Strict`, `HttpOnly`, and `Secure` on all refresh token cookies alongside mandatory `X-CSRF-Token` and Origin validation.
   - Configure internal Docker networks (`acis_ingress` and `acis_internal`); remove all public port bindings for PostgreSQL and backend.
   - Tune FastAPI trusted proxy settings to safely extract real client IP from `X-Forwarded-For`.
-- **Dependencies:** Completion of Phase 4A and Phase 4B; ADR-005.
+- **Dependencies:** Completion of Phase 4A and Phase 4B; ADR-005 and ADR-008.
 - **Files to Modify/Create:**
   - `infrastructure/docker/Caddyfile` or `infrastructure/docker/nginx.conf`
   - `docker-compose.prod.yml`
@@ -161,3 +162,44 @@ flowchart LR
   - Staging deployment passes all automated and manual smoke tests over public HTTPS.
   - DR restore drill recovers complete database state in <30 minutes.
   - Production readiness checklist is 100% satisfied and approved.
+
+---
+
+## 3. Phase 4A Implementation Entry Criteria
+
+Before initiating any coding, Dockerfile editing, or container composition in Phase 4A, the following readiness criteria must be satisfied and verified:
+
+### 1. Finalized Architectural Decisions
+- [x] **ADR-001:** Node.js 26 (preferred) or Node.js 24 (conservative) Alpine base runtime; Next.js 14 permitted strictly for temporary local Phase 4A testing; Next.js 16 (or 15) required for production.
+- [x] **ADR-002 & ADR-003:** Durable PostgreSQL transactional queue (`research_jobs` with `SKIP LOCKED`, 15s heartbeats, 30s lease expiry, crash reclamation).
+- [x] **ADR-004:** Four independent secret categories; KMS/Vault/HSM requirement for production sensitive-data encryption.
+- [x] **ADR-005:** `SameSite=Strict` cookies treated as defense-in-depth alongside mandatory CSRF tokens and Origin validation; HSTS without auto-preload; CSP in Report-Only mode first.
+- [x] **ADR-006:** Base image tag pinning and dynamic release digest pinning policy; non-root user execution (`10001`/`1001`).
+- [x] **ADR-007:** At-least-once execution with idempotent node side effects; monotonic fencing tokens (`fence_token`) on writes.
+- [x] **ADR-008:** Validated organization authorization derived strictly from authenticated user memberships; client-supplied `X-Organization-ID` serves only as a context selector; cross-tenant access returns 404.
+- [x] **ADR-009:** Official `pgvector/pgvector:0.8.0-pg18` image with explicit named volume mount `/var/lib/postgresql/data` and `PGDATA=/var/lib/postgresql/data/pgdata`.
+
+### 2. Decisions Remaining Open for Stakeholder Confirmation
+- **Hosting Provider:** Hetzner Cloud CPX31 (~$20–$25/mo fully loaded) vs. DigitalOcean Droplet (~$60/mo). (Does not block local Phase 4A implementation).
+- **Offsite Backup Store:** Cloudflare R2 vs. AWS S3 Standard. (Does not block Phase 4A; required before Phase 4B).
+- **Production Domain:** Domain name registration and Cloudflare DNS delegation. (Required before Phase 4C).
+
+### 3. Non-Relaxable Security Invariants
+- Memory fallback (`ACIS_ENABLE_MEMORY_FALLBACK`) strictly disabled in production/staging.
+- Argon2id password hashing, AES-256-GCM data encryption, and short-lived (10m) access tokens must remain intact.
+- PostgreSQL port `5432` must never be exposed on host network interfaces.
+- Zero secrets committed to Git, baked into container images, or output in logs.
+
+### 4. Required Implementation Tests
+- **Phase 4A Tests:** Multi-stage image build verification (`docker build`), non-root user verification (`whoami != root`), Next.js standalone artifact verification, local health check probe verification (`curl -f http://localhost:8000/api/v1/health`).
+- **Phase 4B Tests:** Transactional queue unit & integration tests, concurrent worker claim tests (`SKIP LOCKED`), fencing token stale-write rejection tests, SIGKILL recovery tests.
+- **Phase 4C Tests:** SSL Labs TLS 1.3 verification, security header inspection, CSRF token enforcement tests, cross-tenant isolation tests.
+
+### 5. Production Deployment Blockers
+- **Mandatory Framework Modernization Gate:** Commercial production deployment is **strictly blocked** until the frontend is upgraded from Next.js 14 to Next.js 16 (or Next.js 15) with React 19 and verified across all test suites.
+- **Backup Usability Gate:** Production deployment is blocked until an automated restore dry-run from an encrypted snapshot is successfully executed and verified against a test database.
+
+### 6. Worker Reliability & Database Readiness Requirements
+- Database migration `0006_research_jobs.py` must apply cleanly via Alembic.
+- Worker process must trap `SIGTERM`/`SIGINT` for graceful shutdown.
+- Named volume `acis_postgres_data` must mount to `/var/lib/postgresql/data` with explicit `PGDATA=/var/lib/postgresql/data/pgdata`.

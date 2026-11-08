@@ -1,9 +1,9 @@
 # ACIS Database Backup and Disaster Recovery Strategy
 
 **Project:** AI Competitive Intelligence System (ACIS)  
-**Document:** Database Backup, Disaster Recovery & Migration Safety  
+**Document:** Database Backup, Disaster Recovery & Migration Safety (Audited)  
 **Target Release:** Phase 4 Production Foundation  
-**Target Engine:** PostgreSQL 18 with `pgvector`
+**Target Engine:** PostgreSQL 18 with `pgvector` (`pgvector/pgvector:0.8.0-pg18`)
 
 ---
 
@@ -19,12 +19,30 @@ Disaster recovery targets are established based on operational reality for the i
 
 ---
 
-## 2. Backup Architecture & Data Flow
+## 2. PostgreSQL 18 Volume Mount & PGDATA Conventions
+
+> [!CRITICAL]
+> **PostgreSQL 18 Volume Isolation and Directory Conventions**  
+> In PostgreSQL 18 containers, mounting a host volume directly to the data cluster root without an explicit subdirectory can cause permission collisions with filesystem metadata (e.g., `lost+found`), trigger accidental anonymous volume creation, or cause total database invisibility when replacing containers.
+
+To guarantee deterministic persistence and zero data loss across container recreations:
+1. **Official Upstream Image:** Use **`pgvector/pgvector:0.8.0-pg18`** (maintained directly by the pgvector team on official PostgreSQL 18).
+2. **Explicit Volume Mount Specification:**
+   - **Docker Named Volume:** `acis_postgres_data`
+   - **Container Mount Target:** `/var/lib/postgresql/data`
+   - **Mandatory Environment Variable:** `PGDATA=/var/lib/postgresql/data/pgdata`
+3. **Cluster Initialization & Hardening:**
+   - Enforce modern password hashing: `POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256"`
+   - File permissions: internal database cluster files are owned exclusively by `postgres:postgres` (`0700`).
+
+---
+
+## 3. Backup Architecture & Data Flow
 
 ```mermaid
 flowchart TD
     subgraph ProductionCluster ["ACIS Production Environment"]
-        PGService["PostgreSQL 18 Database Container\n(Database: acis_db, Volume: acis_postgres_data)"]
+        PGService["PostgreSQL 18 Database Container\n(Database: acis_db, Volume: acis_postgres_data\nPGDATA=/var/lib/postgresql/data/pgdata)"]
         CronRunner["Backup Automation Job\n(Systemd Timer / Container Cron)\nExecutes: backup-database.sh"]
         ArtifactsVolume["Artifacts Volume\n(/app/data/artifacts)"]
     end
@@ -61,9 +79,9 @@ flowchart TD
 
 ---
 
-## 3. Automated Backup Pipeline Implementation
+## 4. Automated Backup Pipeline Implementation
 
-### 3.1 Logical Backup (`pg_dump`)
+### 4.1 Logical Backup (`pg_dump`)
 - **Format:** Custom PostgreSQL archive format (`-Fc`), enabling parallel restoration, per-table selective extraction, and built-in zlib compression.
 - **Command Specification:**
   ```bash
@@ -74,9 +92,8 @@ flowchart TD
     --exclude-table-data='audit_events' \
     -f "/backups/acis_db_${TIMESTAMP}.dump"
   ```
-  *(Note: `audit_events` can be dumped in a secondary partition if log volume is extensive).*
 
-### 3.2 Backup Encryption at Rest
+### 4.2 Backup Encryption at Rest
 - Raw backup dumps must never sit unencrypted on local disks or offsite buckets.
 - Every dump is encrypted using symmetric AES-256 or asymmetric GPG public key before transport:
   ```bash
@@ -84,7 +101,7 @@ flowchart TD
     -o "/backups/acis_db_${TIMESTAMP}.dump.gpg" "/backups/acis_db_${TIMESTAMP}.dump"
   ```
 
-### 3.3 Retention Policy (Grandfather-Father-Son)
+### 4.3 Retention Policy (Grandfather-Father-Son)
 - **Daily Snapshots (Son):** Retained for **7 days** locally and on remote storage.
 - **Weekly Snapshots (Father):** Captured every Sunday; retained for **4 weeks**.
 - **Monthly Snapshots (Grandfather):** Captured on the 1st of each month; retained for **12 months**.
@@ -92,20 +109,20 @@ flowchart TD
 
 ---
 
-## 4. Backup Verification & Usability Testing
+## 5. Backup Verification & Usability Testing
 
 > [!CRITICAL]
-> A backup file that has never been restored is an untested hypothesis, not a backup.
+> **A backup file that has never been restored is an untested hypothesis, not a backup.**
 
 Verifying that a `.dump` file exists is insufficient; backups can suffer from bit-rot, missing extension binaries (`pgvector`), or decryption failures.
 
-### 4.1 Automated Verification Protocol
-Once weekly, an automated or operator-driven restore test is executed against a temporary, isolated database container:
+### 5.1 Automated Verification Protocol
+Once weekly, an automated restore test is executed against an ephemeral, isolated verification container:
 1. **Decryption Verification:** Decrypt the latest backup file using the production decryption key; confirm exit code 0.
 2. **Checksum Verification:** Run `sha256sum -c manifest.sha256`; verify hash matches the origin creation hash.
 3. **Sandbox Container Provisioning:** Launch an ephemeral verification instance:
    ```bash
-   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d ankane/pgvector:latest
+   docker run --name acis_restore_test -e POSTGRES_PASSWORD=test_restore_pwd -d pgvector/pgvector:0.8.0-pg18
    ```
 4. **Schema & Data Restoration:**
    ```bash
@@ -122,14 +139,14 @@ Once weekly, an automated or operator-driven restore test is executed against a 
 
 ---
 
-## 5. Step-by-Step Disaster Recovery Procedure
+## 6. Step-by-Step Disaster Recovery Procedure
 
 In the event of database corruption, ransomware, or catastrophic host loss:
 
 ### Step 1: Provision Clean Host & Environment
-1. Deploy fresh host VM with hardened OS (Ubuntu 24.04 LTS / Debian 12).
+1. Deploy fresh host VM with hardened OS (Ubuntu 24.04 LTS).
 2. Install Docker Engine and Docker Compose.
-3. Clone repository at the approved release commit (`f658533` or latest production tag).
+3. Clone repository at the approved release commit (`3aaf713` or latest production tag).
 4. Restore `/opt/acis/.env.production` from secured offline password vault.
 
 ### Step 2: Fetch and Decrypt Latest Backup
@@ -180,18 +197,18 @@ curl -f http://localhost:8000/api/v1/health
 
 ---
 
-## 6. Database Migration Safety & Rollback Protocol
+## 7. Database Migration Safety & Rollback Protocol
 
 Alembic migrations must follow a strict zero-downtime safety checklist:
 
-### 6.1 Pre-Migration Gate
+### 7.1 Pre-Migration Gate
 1. **Mandatory Snapshot:** An immediate pre-migration snapshot is triggered before `alembic upgrade head` is executed.
 2. **Backward-Compatible DDL:**
    - Never drop columns in the same release that removes application code references.
    - Adding columns must always provide default values or permit `NULL`.
-   - Index creation on large tables must use `CONCURRENTLY` (or run during low-traffic maintenance windows).
+   - Index creation on large tables must use `CONCURRENTLY`.
 
-### 6.2 Rollback Protocol
+### 7.2 Rollback Protocol
 If an Alembic migration encounters an error during deployment:
 1. The migration transaction aborts automatically.
 2. If partial execution occurred, execute `alembic downgrade -1` or restore from the pre-migration snapshot.
