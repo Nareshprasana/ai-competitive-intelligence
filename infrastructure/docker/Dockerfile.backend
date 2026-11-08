@@ -1,21 +1,65 @@
-# ACIS backend Docker image (Phase 0 + Phase 1)
-FROM python:3.11-slim
+# ==============================================================================
+# ACIS Backend Production Multi-Stage Dockerfile (Phase 4A)
+# Python 3.11-slim-bookworm (Python 3.11.18 runtime)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Builder
+# ------------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies for compiling any native extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+
+# Install dependencies into /install prefix
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ------------------------------------------------------------------------------
+# Stage 2: Production Runtime
+# ------------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS runtime
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PATH="/usr/local/bin:$PATH" \
+    PORT=8000
 
-# Install runtime dependencies.
-COPY backend/requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Install runtime dependencies only (libpq5 for PostgreSQL client, curl for healthchecks)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 10001 appgroup \
+    && useradd -u 10001 -g appgroup -s /bin/false -M -d /app appuser
 
-# Copy application code.
-COPY backend/ . .
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
 
-# The app runs without DATABASE_URL (mock-agent mode). Set DATABASE_URL and
-# OPENROUTER_API_KEY when PostgreSQL / live LLM access are provisioned.
+# Copy backend application code
+COPY --chown=appuser:appgroup backend/ /app/
+
+# Switch to non-root user
+USER appuser
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

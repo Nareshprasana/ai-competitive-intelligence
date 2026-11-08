@@ -1,86 +1,73 @@
-# Implementation Plan: ACIS Phase 2B — Competitor Discovery Agent
+# Implementation Plan: ACIS Phase 4A — Production-Ready Containerization Foundation
 
 ## Overview
-Replace the deterministic mock `competitor_discovery_mock` node with a real Competitor Discovery Agent that identifies and validates direct, indirect, emerging, and substitute competitors for a researched company. The agent reuses existing search, LLM, evidence, and persistence infrastructure. No new dependencies required.
+Implement production-ready containerization for ACIS using multi-stage Docker builds, PostgreSQL 18 with pgvector, Next.js 14 standalone output, and Caddy reverse proxy routing. Ensure complete isolation between containerized environments and the local development database `acis_db`.
 
-## Architecture
+## Container Architecture
 
 ```
-Company Profile (from company_researcher)
-    ↓
-Product and Service Analysis
-    ↓
-Market and Customer Analysis
-    ↓
-Competitor Search Query Generation
-    ↓
-External Search (reuse SearchProvider: mock default / DuckDuckGo)
-    ↓
-Candidate Company Extraction (LLM structured extraction)
-    ↓
-Duplicate Removal (by name/domain)
-    ↓
-Competitor Qualification (transparent scoring model)
-    ↓
-Evidence Validation (reuse evidence infrastructure)
-    ↓
-Competitor Ranking
-    ↓
-Structured Results (CompetitorProfile[])
-    ↓
-PostgreSQL Persistence (Competitor + CompetitorEvidence tables)
+                       [ Host Ingress: :8080 ]
+                                 │
+                     ┌───────────▼───────────┐
+                     │   Caddy Reverse Proxy │
+                     │   (caddy:2-alpine)    │
+                     └─────┬───────────┬─────┘
+           /api/*          │           │   /*
+    ┌──────────────────────┘           └──────────────────────┐
+    │                                                         │
+┌───▼─────────────────────┐                       ┌───────────▼───────────┐
+│     FastAPI Backend     │                       │    Next.js Frontend   │
+│ (python:3.11-slim-      │                       │   (node:24-alpine     │
+│  bookworm, multi-stage, │                       │    standalone,        │
+│  non-root: appuser      │                       │    non-root: nextjs   │
+│  UID 10001)             │                       │    UID 1001)          │
+└───┬─────────────────────┘                       └───────────────────────┘
+    │
+    │  Internal Network (acis_phase4a_internal)
+    │
+┌───▼─────────────────────┐
+│  PostgreSQL 18 Database │
+│  (pgvector 0.8.7)       │
+│  Mount: /var/lib/       │
+│         postgresql      │
+│  PGDATA: /var/lib/      │
+│   postgresql/18/docker  │
+│  DB: acis_phase4a_db    │
+└─────────────────────────┘
 ```
 
-## New Modules
+## Implemented Deliverables
 
-| Module | Purpose |
-|--------|---------|
-| `app/schemas/competitor.py` | `CompetitorProfile`, `CompetitorType`, `QualificationFactor`, `CompetitorCollection` |
-| `app/intelligence/competitor.py` | Qualification scoring, deduplication, overlap analysis |
-| `app/agents/competitor_researcher.py` | `CompetitorResearcherAgent` (extends `BaseAgent`) |
-| `app/models/competitor.py` | `Competitor`, `CompetitorEvidence` ORM models |
-| `app/repositories/competitor.py` | `CompetitorRepository` with org isolation |
-| `alembic/versions/0003_competitors.py` | Migration |
-| `app/graph/nodes/competitor_discovery.py` | Graph node replacing `competitor_discovery_mock` |
+1. **Multi-Stage Backend Dockerfile (`infrastructure/docker/Dockerfile.backend`)**:
+   - Builder stage: Installs build dependencies and wheels into `/install` prefix.
+   - Runtime stage: Minimal `python:3.11-slim-bookworm` (Python 3.11.18 runtime) with only runtime shared library `libpq5` and `curl`.
+   - Security: Runs as non-root user `appuser` (UID 10001, GID 10001).
+   - Container size: ~126MB compressed content size.
+   - Built-in health check on `/api/v1/health`.
 
-## Modified Modules
+2. **Multi-Stage Frontend Dockerfile (`infrastructure/docker/Dockerfile.frontend`)**:
+   - Standalone output enabled in `frontend/next.config.js`.
+   - Stage 1 (`deps`): Installs dependencies with `npm ci`.
+   - Stage 2 (`builder`): Compiles standalone Next.js build.
+   - Stage 3 (`runner`): Minimal `node:24-alpine` (Node.js v24.22.2) standalone server.
+   - Security: Runs as non-root user `nextjs` (UID 1001).
+   - Container size: ~69.6MB compressed content size.
+   - Built-in health check on root `/`.
 
-| Module | Change |
-|--------|--------|
-| `app/graph/builder.py` | Register `competitor_discovery` in `NODE_ORDER`/`_NODES` |
-| `app/graph/nodes/__init__.py` | Export `competitor_discovery`, keep `competitor_discovery_mock` |
-| `app/core/config.py` | Add competitor search settings |
-| `backend/.env.example` | Add competitor env vars |
-| `docs/architecture.md`, `docs/agent-design.md`, `docs/development-roadmap.md`, `README.md` | Update docs |
+3. **PostgreSQL 18 & pgvector (`docker-compose.phase4a.yml`)**:
+   - Official image `pgvector/pgvector:0.8.7-pg18-bookworm`.
+   - Named volume `acis_phase4a_postgres_data` mounted at `/var/lib/postgresql`.
+   - Versioned directory `PGDATA=/var/lib/postgresql/18/docker`.
+   - Isolated database `acis_phase4a_db` (zero host port publishing).
+   - All 5 Alembic migrations applied and verified.
+   - Extension `vector 0.8.7` enabled and verified.
 
-## Design Decisions
+4. **Caddy Reverse Proxy (`infrastructure/docker/Caddyfile`)**:
+   - Ingress on port 8080.
+   - Header sanitization (`X-Forwarded-*`, `X-Real-IP`, `Host`).
+   - Security headers: `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy strict-origin-when-cross-origin`, `Permissions-Policy`.
+   - Healthcheck on `/caddy-health`.
 
-- **Four competitor types**: `direct`, `indirect`, `emerging`, `substitute` — every competitor has a documented `competitor_type`
-- **Transparent qualification scoring**: weighted sum of evidence-backed factors (product similarity, customer overlap, problem-space overlap, geographic overlap, business-model similarity). No unexplained LLM score.
-- **Separation**: evidence-backed observations vs analytical judgments vs unknown information
-- **Duplicate removal**: by normalized company name and domain
-- **Resource reuse**: reuses company research search results, caches queries, budgeted search/LLM calls
-- **Organization isolation**: all repository queries filter by `organization_id`
-- **No uncontrolled loops**: linear discovery flow, bounded candidates
-- **Graceful degradation**: without LLM, uses heuristic qualification from search snippets
-
-## Test Plan
-
-- Unit: schemas, qualification scoring, deduplication, agent (mocked LLM/search), persistence, org isolation
-- Integration: LangGraph node execution, checkpoint recovery, failure handling
-- All tests use deterministic fixtures; no real search APIs or LLM credits
-
-## Acceptance Criteria
-
-1. Competitor Discovery Agent implemented ✅
-2. Four competitor categories supported ✅
-3. Candidate qualification is explainable ✅
-4. Evidence attached to claims ✅
-5. Competitors persist in PostgreSQL ✅
-6. Organization isolation enforced ✅
-7. Mock node replaced in LangGraph ✅
-8. Existing functionality preserved ✅
-9. Existing tests pass ✅
-10. New tests pass ✅
-11. Documentation updated ✅
-12. No secrets committed ✅
+5. **Docker Compose & Configuration (`docker-compose.phase4a.yml`, `.env.phase4a.example`)**:
+   - Private internal bridge network `acis_phase4a_internal`.
+   - Isolated environment with template `.env.phase4a.example` and untracked `.env.phase4a`.

@@ -1,0 +1,117 @@
+# ==============================================================================
+# ACIS Phase 4A — Production Container Architecture
+# PostgreSQL 18 (pgvector), Multi-Stage FastAPI Backend, Multi-Stage Next.js
+# Frontend, and Caddy Reverse Proxy.
+# ==============================================================================
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-bookworm
+    container_name: acis_phase4a_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-acis_phase4a_db}
+      POSTGRES_USER: ${POSTGRES_USER:-acis_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acis_secure_password_phase4a}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - acis_phase4a_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-acis_user} -d $${POSTGRES_DB:-acis_phase4a_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - acis_phase4a_internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+    container_name: acis_phase4a_backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-staging}
+      DEBUG: "false"
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-acis_user}:${POSTGRES_PASSWORD:-acis_secure_password_phase4a}@postgres:5432/${POSTGRES_DB:-acis_phase4a_db}
+      AUTH_JWT_SIGNING_KEY: ${AUTH_JWT_SIGNING_KEY}
+      AUTH_EMAIL_LOOKUP_KEY: ${AUTH_EMAIL_LOOKUP_KEY}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      DATA_ENCRYPTION_KEYS: ${DATA_ENCRYPTION_KEYS}
+      DATA_ENCRYPTION_ACTIVE_KEY_ID: ${DATA_ENCRYPTION_ACTIVE_KEY_ID:-k1}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-""}
+      BACKEND_CORS_ORIGINS: '["http://localhost:8080", "http://127.0.0.1:8080"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - acis_phase4a_internal
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+    container_name: acis_phase4a_frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NEXT_PUBLIC_API_URL: ""
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - acis_phase4a_internal
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: acis_phase4a_caddy
+    restart: unless-stopped
+    ports:
+      - "${ACIS_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./infrastructure/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - acis_phase4a_caddy_data:/data
+      - acis_phase4a_caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/caddy-health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - acis_phase4a_internal
+
+networks:
+  acis_phase4a_internal:
+    name: acis_phase4a_internal
+    driver: bridge
+
+volumes:
+  acis_phase4a_postgres_data:
+    name: acis_phase4a_postgres_data
+  acis_phase4a_caddy_data:
+    name: acis_phase4a_caddy_data
+  acis_phase4a_caddy_config:
+    name: acis_phase4a_caddy_config

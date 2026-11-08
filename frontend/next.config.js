@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   // Allow the frontend to call the FastAPI backend during development.
   async rewrites() {
     return [

@@ -55,12 +55,13 @@ yarn-debug.log*
 yarn-error.log*
 
 # Docker
-.dockerignore
+# (.dockerignore files tracked in version control)
 
 # Environment files (never commit secrets)
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # Logs
 *.log
