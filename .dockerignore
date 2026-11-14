@@ -12,6 +12,9 @@
 **/.pytest_cache
 **/.coverage
 **/htmlcov
+**/tests
+**/pytest.ini
+**/requirements-dev.txt
 
 # Node / Next.js
 **/node_modules

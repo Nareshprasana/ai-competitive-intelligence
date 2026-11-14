@@ -1,12 +1,12 @@
 # ==============================================================================
 # ACIS Frontend Production Multi-Stage Dockerfile (Phase 4A)
-# Node.js 24 Alpine LTS (Next.js 14 standalone output)
+# Node.js 26 Alpine Active LTS (Next.js 14 standalone output)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
 # Stage 1: Dependencies
 # ------------------------------------------------------------------------------
-FROM node:24-alpine AS deps
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS deps
 
 RUN apk add --no-cache libc6-compat
 
@@ -19,7 +19,7 @@ RUN npm ci
 # ------------------------------------------------------------------------------
 # Stage 2: Builder
 # ------------------------------------------------------------------------------
-FROM node:24-alpine AS builder
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 
 WORKDIR /app
 
@@ -34,7 +34,7 @@ RUN npm run build
 # ------------------------------------------------------------------------------
 # Stage 3: Production Runner
 # ------------------------------------------------------------------------------
-FROM node:24-alpine AS runner
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runner
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ ENV NODE_ENV=production \
 
 # Install curl for reliable container healthchecks and create non-root system user
 RUN addgroup --system --gid 1001 nodejs \
-    && adduser --system --uid 1001 nextjs \
+    && adduser --system --uid 1001 -G nodejs nextjs \
     && apk add --no-cache curl
 
 # Copy public folder and standalone build artifacts
@@ -53,7 +53,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-USER nextjs
+USER nextjs:nodejs
 
 EXPOSE 3000
 

@@ -36,7 +36,3 @@ httpx==0.28.1
 argon2-cffi==25.1.0
 PyJWT==2.13.0
 cryptography==50.0.1
-
-# Testing
-pytest==8.4.2
-pytest-asyncio==0.26.0

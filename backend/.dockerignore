@@ -9,3 +9,9 @@ htmlcov
 .env
 .env.*
 !*.example
+
+# Test suite and dev tooling
+tests/
+pytest.ini
+requirements-dev.txt
+

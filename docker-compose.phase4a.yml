@@ -6,7 +6,7 @@
 
 services:
   postgres:
-    image: pgvector/pgvector:0.8.7-pg18-bookworm
+    image: pgvector/pgvector:0.8.7-pg18-bookworm@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47
     container_name: acis_phase4a_postgres
     restart: unless-stopped
     environment:
@@ -80,7 +80,7 @@ services:
       - acis_phase4a_internal
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     container_name: acis_phase4a_caddy
     restart: unless-stopped
     ports:

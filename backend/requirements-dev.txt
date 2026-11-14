@@ -1,0 +1,6 @@
+# ACIS backend development and test dependencies
+-r requirements.txt
+
+# Testing
+pytest==8.4.2
+pytest-asyncio==0.26.0

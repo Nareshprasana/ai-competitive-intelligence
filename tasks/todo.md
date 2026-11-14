@@ -59,3 +59,45 @@
 - [x] Run backend test suite (`pytest`) -> 302 passed out of 302 tests (100% pass rate)
 - [x] Run frontend unit/integration tests -> 20 passed out of 20 tests (100% pass rate)
 - [x] Run browser user journeys -> 8 passed out of 8 tests (100% pass rate)
+
+## Stage K: Final Security & Compliance Audit
+- [x] Audit container image pins and replace floating tags with exact patch tags and verified SHA-256 digests:
+  - [x] `pgvector/pgvector:0.8.7-pg18-bookworm@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47`
+  - [x] `python:3.11.18-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39`
+  - [x] `node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5` (Active LTS verified compatible with Next.js 14)
+  - [x] `caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0`
+- [x] Audit dependency separation:
+  - [x] Created `backend/requirements-dev.txt` with test tooling (`pytest==8.4.2`, `pytest-asyncio==0.26.0`)
+  - [x] Separated test tooling from `backend/requirements.txt`
+  - [x] Verified `reportlab==5.0.1` remains available in production backend runtime
+  - [x] Verified production backend image excludes `pytest` and test directories
+- [x] Audit secret & image-layer isolation:
+  - [x] Verified `.env.phase4a` remains untracked and excluded in `.gitignore`
+  - [x] Verified `.dockerignore` excludes `tests/`, `pytest.ini`, env files, caches, and test artifacts
+  - [x] Verified no credentials in image layers or build history
+- [x] Audit database & volume isolation:
+  - [x] Preserved existing development database `acis_db` on host PostgreSQL 18
+  - [x] Verified Phase 4A uses only `acis_phase4a_db` and volume `acis_phase4a_postgres_data`
+  - [x] Verified PostgreSQL 18 volume mount `/var/lib/postgresql` and `PGDATA=/var/lib/postgresql/18/docker`
+  - [x] Verified `vector 0.8.7` extension installed and working
+  - [x] Verified data persistence across container restarts
+  - [x] Verified database port 5432 is internal only (zero host port publishing)
+- [x] Audit authentication, authorization, and reverse-proxy security (12/12 passing):
+  - [x] 1. Login through public local ingress (`/api/v1/auth/login`) -> 200 OK
+  - [x] 2. HttpOnly refresh cookie behavior -> `HttpOnly` present on refresh cookie
+  - [x] 3. Secure cookie behavior -> `Secure` attribute enforced in configured environment
+  - [x] 4. SameSite Strict remains intact -> `SameSite=Strict` on auth cookies
+  - [x] 5. Refresh token rotation & token theft detection -> single-use rotation, replay detection, and session revocation cascade
+  - [x] 6. Logout and session revocation -> 204 No Content, cookies cleared, session revoked
+  - [x] 7. CSRF validation -> 403 Forbidden on missing/mismatched `X-CSRF-Token`
+  - [x] 8. Origin validation -> 403 Forbidden on disallowed or missing `Origin`
+  - [x] 9. Cross-tenant authorization and 404 behavior -> 404 Not Found on cross-tenant resource lookup (enumeration prevented); 403 on tenant spoofing
+  - [x] 10. Forwarded-header sanitization and trusted proxy handling -> `Via: 1.1 Caddy` header, upstream sanitized
+  - [x] 11. Request correlation IDs -> `X-Request-Id` generated/propagated on all responses
+  - [x] 12. Backend error sanitization -> 404 and 422 errors sanitized without stack traces or internal secrets
+- [x] Non-root execution verified:
+  - [x] Backend: `appuser:appgroup` (UID 10001, GID 10001)
+  - [x] Frontend: `nextjs:nodejs` (UID 1001, GID 1001)
+  - [x] Postgres: `postgres` (UID 999)
+- [x] Rate limiting verified: 429 Too Many Requests enforced through Caddy
+
