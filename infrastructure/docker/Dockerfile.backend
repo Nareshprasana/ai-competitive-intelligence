@@ -1,5 +1,5 @@
 # ==============================================================================
-# ACIS Backend Production Multi-Stage Dockerfile (Phase 4A)
+# ACIS Backend Production Multi-Stage Dockerfile
 # Pinned to Python 3.11.18 runtime on Debian 12 (bookworm)
 # ==============================================================================
 

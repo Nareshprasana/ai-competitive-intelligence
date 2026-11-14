@@ -1,0 +1,62 @@
+# ==============================================================================
+# ACIS Ingress Reverse Proxy — Production Configuration
+# Automated CA-Issued TLS (Let's Encrypt / ZeroSSL), TLS 1.3, Strict Headers
+# ==============================================================================
+
+{
+    admin off
+    # Global TLS Options: Require TLS 1.3 baseline in production
+    servers {
+        protocols h1 h2 h3
+    }
+}
+
+# Production Ingress Site Block
+# Replaces local self-signed internal CA with automated public CA certificates
+{$ACIS_DOMAIN:acis.example.com} {
+    # Automated certificate issuance and renewal via ACME CA
+    tls {$ACIS_TLS_EMAIL:security@example.com} {
+        protocols tls1.3
+    }
+
+    # Health check probe (monitored by upstream load balancer or orchestrator)
+    handle /caddy-health {
+        respond "OK" 200
+    }
+
+    # API routes routed to private FastAPI backend
+    handle /api/* {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    # All other routes routed to Next.js frontend standalone server
+    handle /* {
+        reverse_proxy frontend:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+
+    # Production hardened HTTP security response headers
+    header {
+        # Strict-Transport-Security (2 years, including subdomains, preloaded)
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        # Content framing prevention
+        X-Frame-Options "DENY"
+        # MIME type sniffing prevention
+        X-Content-Type-Options "nosniff"
+        # Cross-origin referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Restrict browser features
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        # Strip server header to prevent information disclosure
+        -Server
+    }
+}

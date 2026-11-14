@@ -84,8 +84,8 @@ services:
     container_name: acis_caddy
     restart: unless-stopped
     ports:
-      - "${ACIS_HTTP_PORT:-8080}:80"
-      - "${ACIS_HTTPS_PORT:-8443}:443"
+      - "127.0.0.1:${ACIS_HTTP_PORT:-8080}:80"
+      - "127.0.0.1:${ACIS_HTTPS_PORT:-8443}:443"
     volumes:
       - ./infrastructure/docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -110,7 +110,7 @@ networks:
     driver: bridge
 
 volumes:
-  # Preserve existing PostgreSQL 18 + pgvector data volume
+  # Legacy volume identifier preserved to guarantee data safety and prevent database loss
   postgres_data:
     name: acis_phase4a_postgres_data
   caddy_data:

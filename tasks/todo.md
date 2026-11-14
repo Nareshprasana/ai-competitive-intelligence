@@ -33,22 +33,28 @@
 - [x] Configure PostgreSQL 18 with `pgvector/pgvector:0.8.7-pg18-bookworm`
 - [x] Mount volume at `/var/lib/postgresql` with data directory `PGDATA=/var/lib/postgresql/18/docker`
 - [x] Ensure complete database isolation (zero host port publishing, preserving host `acis_db`)
+- [x] Preserve legacy volume identifier `acis_phase4a_postgres_data` mapped to `postgres_data` to ensure data safety
 - [x] Apply all 5 Alembic migrations to isolated container database
 - [x] Verify `vector` extension version 0.8.7
 - [x] Verify persistent volume preservation across container restarts
 
 ## Caddy Reverse Proxy & Dual-Protocol Ingress
-- [x] Implement `infrastructure/docker/Caddyfile` with reverse proxy routes
-  - [x] Ingress proxy on port 8080 (HTTP) and port 8443 (HTTPS with `tls internal`)
+- [x] Implement `infrastructure/docker/Caddyfile` for local development
+  - [x] Ingress proxy bound strictly to loopback `127.0.0.1` (port 8080 HTTP and port 8443 HTTPS with `tls internal`)
   - [x] `/caddy-health` -> health probe endpoint (200 OK)
   - [x] `/api/*` -> backend:8000 with sanitized headers
   - [x] `/*` -> frontend:3000
+- [x] Implement separate production template `infrastructure/docker/Caddyfile.production`
+  - [x] Automated CA-issued certificates via ACME (Let's Encrypt / ZeroSSL)
+  - [x] Modern TLS 1.3 baseline enforcement
+  - [x] Production HSTS and hardened security headers
 - [x] Enforce security headers: `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy strict-origin-when-cross-origin`, `Permissions-Policy`
 - [x] Verify local HTTPS TLS handshake and backend routing via Caddy
 
 ## Compose Orchestration & Production Configuration
 - [x] Standardize root `docker-compose.yml` with private bridge network `acis_internal`
 - [x] Standardize container names: `acis_postgres`, `acis_backend`, `acis_frontend`, `acis_caddy`
+- [x] Restrict ingress port binding to `127.0.0.1` (zero `0.0.0.0` exposure)
 - [x] Create `.env.docker.example` template with clean variable naming
 - [x] Remove legacy milestone-based file artifacts (`docker-compose.phase4a.yml`, `.env.phase4a.example`)
 - [x] Verify stack startup and health status via `docker compose --env-file .env.docker up -d`
@@ -74,9 +80,13 @@
 
 ## Browser-Level Authentication & Session Verification
 - [x] Browser automated verification of live authentication flows in Chromium:
+  - [x] Distinguish Local HTTP (RFC 6761 localhost secure context) vs Local HTTPS (Internal CA TLS) vs Production HTTPS
   - [x] Login via browser at `http://localhost:8080/login` and `https://localhost:8443/login`
   - [x] Verification of cookie storage (`acis_refresh_token`: HttpOnly=true, Secure=true, SameSite=Strict; `acis_csrf_token`: HttpOnly=false, Secure=true, SameSite=Strict)
   - [x] Session restoration on browser reload (silent refresh token exchange returning 200 OK)
+  - [x] Refresh token rotation verified in browser session
+  - [x] Authenticated cross-tenant isolation verified (404 Not Found)
+  - [x] CSRF protection verified in browser context (403 Forbidden on missing token)
   - [x] User logout and return to login screen (refresh token invalidated and cleared from browser storage)
   - [x] Fixed API client relative routing in `frontend/lib/api.js` for reverse-proxy architectures
 
@@ -84,3 +94,14 @@
 - [x] Audit all historical exit code 1 failures from transcripts
 - [x] Categorize failure root causes (environmental, test assumptions, image characteristics, test ordering)
 - [x] Verify that all genuine controls pass without regressions
+
+## Production-Readiness Operational Backlog (Open Gated Requirements)
+- [ ] Implement durable asynchronous background job execution with state checkpointing and retry mechanisms
+- [ ] Configure automated client-side encrypted database backups for PostgreSQL 18
+- [ ] Establish automated restore verification drills and pgvector re-indexing validation
+- [ ] Implement artifact backup and disaster recovery replication for research reports
+- [ ] Integrate production KMS / Vault / HSM provider for data encryption keys and JWT secrets
+- [ ] Verify production TLS 1.3 certificate lifecycle and ACME renewal with production domain
+- [ ] Configure structured JSON logging, OpenTelemetry tracing, and Prometheus RED metrics
+- [ ] Formalize automated zero-downtime deployment and health-gated rollback pipelines
+- [ ] Complete formal disaster recovery runbooks and RPO/RTO verification drills

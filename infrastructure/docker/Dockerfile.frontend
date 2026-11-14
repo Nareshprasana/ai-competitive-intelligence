@@ -1,5 +1,5 @@
 # ==============================================================================
-# ACIS Frontend Production Multi-Stage Dockerfile (Phase 4A)
+# ACIS Frontend Production Multi-Stage Dockerfile
 # Node.js 26 Alpine Active LTS (Next.js 14 standalone output)
 # ==============================================================================
 
