@@ -1,47 +1,47 @@
-# Implementation Plan: ACIS Phase 4A — Production-Ready Containerization Foundation
+# Continuous Engineering Plan: Container Infrastructure & Security Hardening
 
 ## Overview
-Implement production-ready containerization for ACIS using multi-stage Docker builds, PostgreSQL 18 with pgvector, Next.js 14 standalone output, and Caddy reverse proxy routing. Ensure complete isolation between containerized environments and the local development database `acis_db`.
+Standardize and maintain production-ready containerization for ACIS using multi-stage Docker builds, PostgreSQL 18 with pgvector, Next.js 14 standalone output, and Caddy reverse proxy routing with dual HTTP and TLS ingress. Ensure complete isolation between containerized environments and the local development database `acis_db`.
 
 ## Container Architecture
 
 ```
-                       [ Host Ingress: :8080 ]
-                                 │
-                     ┌───────────▼───────────┐
-                     │   Caddy Reverse Proxy │
-                     │ (caddy:2.11.9-alpine@ │
-                     │  sha256:003a9780...)  │
-                     └─────┬───────────┬─────┘
-           /api/*          │           │   /*
-    ┌──────────────────────┘           └──────────────────────┐
-    │                                                         │
-┌───▼─────────────────────┐                       ┌───────────▼───────────┐
-│     FastAPI Backend     │                       │    Next.js Frontend   │
-│ (python:3.11.18-slim-   │                       │ (node:26.13.1-alpine  │
-│  bookworm@sha256:a83b...,│                      │  3.24@sha256:6bd9a...,│
-│  multi-stage runtime,   │                       │  standalone build,    │
-│  non-root: appuser      │                       │  non-root: nextjs     │
-│  UID 10001)             │                       │  UID 1001)            │
-└───┬─────────────────────┘                       └───────────────────────┘
-    │
-    │  Internal Network (acis_phase4a_internal)
-    │
-┌───▼─────────────────────┐
-│  PostgreSQL 18 Database │
-│ (pgvector:0.8.7-pg18-   │
-│  bookworm@sha256:c29f.) │
-│  Mount: /var/lib/       │
-│         postgresql      │
-│  PGDATA: /var/lib/      │
-│   postgresql/18/docker  │
-│  DB: acis_phase4a_db    │
-└─────────────────────────┘
+                       [ Host Ingress: :8080 (HTTP) | :8443 (HTTPS) ]
+                                            │
+                                ┌───────────▼───────────┐
+                                │   Caddy Reverse Proxy │
+                                │ (caddy:2.11.9-alpine@ │
+                                │  sha256:003a9780...)  │
+                                └─────┬───────────┬─────┘
+                      /api/*          │           │   /*
+               ┌──────────────────────┘           └──────────────────────┐
+               │                                                         │
+   ┌───────────▼───────────┐                                 ┌───────────▼───────────┐
+   │     FastAPI Backend   │                                 │    Next.js Frontend   │
+   │ (python:3.11.18-slim- │                                 │ (node:26.13.1-alpine  │
+   │  bookworm@sha256:a83b,│                                 │  3.24@sha256:6bd9a,   │
+   │  multi-stage runtime, │                                 │  standalone build,    │
+   │  non-root: appuser    │                                 │  non-root: nextjs     │
+   │  UID 10001)           │                                 │  UID 1001)            │
+   └───────────┬───────────┘                                 └───────────────────────┘
+               │
+               │  Internal Network (acis_internal)
+               │
+   ┌───────────▼───────────┐
+   │ PostgreSQL 18 + Vector│
+   │ (pgvector:0.8.7-pg18- │
+   │  bookworm@sha256:c29f)│
+   │  Mount: /var/lib/     │
+   │         postgresql    │
+   │  PGDATA: /var/lib/    │
+   │   postgresql/18/docker│
+   │  Volume: postgres_data│
+   └───────────────────────┘
 ```
 
-## Implemented Deliverables
+## Implemented Engineering Modules
 
-1. **Multi-Stage Backend Dockerfile (`infrastructure/docker/Dockerfile.backend`)**:
+1. **Multi-Stage Backend Containerization (`infrastructure/docker/Dockerfile.backend`)**:
    - Builder stage: Installs build dependencies and wheels into `/install` prefix.
    - Runtime stage: Pinned `python:3.11.18-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39` with only runtime shared library `libpq5` and `curl`.
    - Dependency Separation: Runtime dependencies (`backend/requirements.txt`, including `reportlab==5.0.1`) separated from test-only tooling (`backend/requirements-dev.txt`). `pytest` and test files excluded from production runtime.
@@ -49,7 +49,7 @@ Implement production-ready containerization for ACIS using multi-stage Docker bu
    - Container size: ~126MB compressed content size.
    - Built-in health check on `/api/v1/health`.
 
-2. **Multi-Stage Frontend Dockerfile (`infrastructure/docker/Dockerfile.frontend`)**:
+2. **Multi-Stage Frontend Containerization (`infrastructure/docker/Dockerfile.frontend`)**:
    - Standalone output enabled in `frontend/next.config.js`.
    - Stage 1 (`deps`): Installs dependencies with `npm ci`.
    - Stage 2 (`builder`): Compiles standalone Next.js build.
@@ -58,21 +58,22 @@ Implement production-ready containerization for ACIS using multi-stage Docker bu
    - Container size: ~69.6MB compressed content size.
    - Built-in health check on root `/`.
 
-3. **PostgreSQL 18 & pgvector (`docker-compose.phase4a.yml`)**:
+3. **PostgreSQL 18 & pgvector Storage Foundation (`docker-compose.yml`)**:
    - Pinned official image `pgvector/pgvector:0.8.7-pg18-bookworm@sha256:c29f30688a9ad961691bdf0ec1650717cc132a5814619d80f80463d6e4c42e47`.
-   - Named volume `acis_phase4a_postgres_data` mounted at `/var/lib/postgresql`.
+   - Named volume `postgres_data` (mapped to persistent store `acis_phase4a_postgres_data`) mounted at `/var/lib/postgresql`.
    - Versioned directory `PGDATA=/var/lib/postgresql/18/docker`.
-   - Isolated database `acis_phase4a_db` (zero host port publishing).
+   - Isolated database instance (zero host port publishing). Host database `acis_db` strictly preserved on host port 5432.
    - All 5 Alembic migrations applied and verified.
    - Extension `vector 0.8.7` enabled and verified.
 
-4. **Caddy Reverse Proxy (`infrastructure/docker/Caddyfile`)**:
+4. **Caddy Reverse Proxy & Security Ingress (`infrastructure/docker/Caddyfile`)**:
    - Pinned official image `caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0`.
-   - Ingress on port 8080.
-   - Header sanitization (`X-Forwarded-*`, `X-Real-IP`, `Host`).
+   - Ingress on port 8080 (HTTP) and port 8443 (HTTPS with local `tls internal`).
+   - Header sanitization (`Host`, `X-Real-IP`, `X-Forwarded-*`).
    - Security headers: `X-Frame-Options DENY`, `X-Content-Type-Options nosniff`, `Referrer-Policy strict-origin-when-cross-origin`, `Permissions-Policy`.
    - Healthcheck on `/caddy-health`.
 
-5. **Docker Compose & Configuration (`docker-compose.phase4a.yml`, `.env.phase4a.example`)**:
-   - Private internal bridge network `acis_phase4a_internal`.
-   - Isolated environment with template `.env.phase4a.example` and untracked `.env.phase4a`.
+5. **Docker Compose Orchestration & Configuration (`docker-compose.yml`, `.env.docker.example`)**:
+   - Private internal bridge network `acis_internal`.
+   - Clean production-grade naming for all services (`postgres`, `backend`, `frontend`, `caddy`).
+   - Isolated environment with template `.env.docker.example` and untracked `.env.docker`.

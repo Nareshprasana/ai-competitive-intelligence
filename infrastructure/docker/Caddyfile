@@ -1,8 +1,9 @@
 {
     admin off
-    auto_https off
+    auto_https disable_redirects
 }
 
+# HTTP Ingress (port 80 -> host 8080)
 :80 {
     # Health check endpoint for ingress proxy
     handle /caddy-health {
@@ -14,8 +15,6 @@
         reverse_proxy backend:8000 {
             header_up Host {host}
             header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
-            header_up X-Forwarded-Proto {scheme}
         }
     }
 
@@ -24,8 +23,41 @@
         reverse_proxy frontend:3000 {
             header_up Host {host}
             header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
-            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Security response headers
+    header {
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+}
+
+# HTTPS Ingress with Local Trusted TLS (port 443 -> host 8443)
+https://localhost, https://127.0.0.1 {
+    tls internal
+
+    # Health check endpoint for ingress proxy
+    handle /caddy-health {
+        respond "OK" 200
+    }
+
+    # API routes routed to FastAPI backend
+    handle /api/* {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # All other routes routed to Next.js frontend
+    handle /* {
+        reverse_proxy frontend:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
         }
     }
 
